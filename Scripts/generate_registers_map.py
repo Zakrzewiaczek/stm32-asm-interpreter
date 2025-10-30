@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+"""Generate register map from CMSIS header files"""
+
+from pathlib import Path
+import re
+
+base_path = Path(__file__).parent.parent
+cmsis_path = base_path / "Drivers" / "CMSIS" / "Device" / "ST"
+
+# Find all header files
+headers = [h for stm32_dir in cmsis_path.glob("STM32*") 
+           if stm32_dir.is_dir()
+           for h in (stm32_dir / "Include").glob("stm32*.h")
+           if not h.name.startswith("system_")]
+
+if not headers:
+    print("Error: No CMSIS header files found")
+    print(f"Searched in: {cmsis_path}")
+    exit(1)
+
+header_file = sorted(headers)[0]
+mcu_name = header_file.stem
+print(f"Processing: {header_file.name}")
+
+# Read file content
+try:
+    content = header_file.read_text(encoding='utf-8', errors='ignore')
+except Exception as e:
+    print(f"Error reading file: {e}")
+    exit(1)
+
+# Extract typedefs with their body
+typedef_pattern = r'typedef\s+struct\s*\{([^}]*)\}\s*(\w+_TypeDef)\s*;'
+typedefs = re.findall(typedef_pattern, content, re.DOTALL)
+
+c_entries = []
+reg_count = 0
+typedef_count = 0
+instance_count = 0
+
+# Process each typedef
+for struct_body, typedef_name in typedefs:
+    # Extract registers with types: __IO uint32_t NAME;
+    reg_pattern = r'(?:__IO|__I|__O)\s+(uint(?:32|16|8)_t)\s+(\w+)(?:\[.*?\])?;'
+    registers = [(t, n) for t, n in re.findall(reg_pattern, struct_body)
+                 if not n.startswith('RESERVED')]
+    
+    if not registers:
+        continue
+    
+    # Find macro definitions using this typedef: #define NAME ((TypeDef *)ADDR)
+    define_pattern = rf'#define\s+(\w+)\s+\(\(({re.escape(typedef_name)})\s*\*\)'
+    defines = re.findall(define_pattern, content)
+    
+    if not defines:
+        continue
+    
+    typedef_count += 1
+    instance_count += len(defines)
+    module_name = typedef_name.replace('_TypeDef', '')
+    
+    c_entries.append('')
+    c_entries.append(f'    // {module_name} registers')
+    
+    for define_name, _ in defines:
+        for reg_type, reg_name in registers:
+            c_entries.append(f'    REG_ENTRY("{define_name}_{reg_name}", {define_name}->{reg_name}),')
+            reg_count += 1
+
+print(f"Found: {typedef_count} typedefs, {instance_count} instances")
+print(f"Generated: {reg_count} register entries")
+
+# Generate .h file
+guard_name = "__REGISTERS_MAP_H"
+h_content = [
+    f'#ifndef {guard_name}',
+    f'#define {guard_name}',
+    '',
+    '#ifdef __cplusplus',
+    'extern "C" {',
+    '#endif',
+    '',
+    '#include <stddef.h>',
+    '#include <stdint.h>',
+    '',
+    f'#define REGISTERS_COUNT {reg_count}',
+    '',
+    'typedef struct {',
+    '    const char* name;',
+    '    volatile void* address;',
+    '    size_t size;',
+    '} register_t;',
+    '',
+    'extern register_t hwregs[REGISTERS_COUNT];',
+    '',
+    'register_t* get_register(const char* name);',
+    '',
+    '#ifdef __cplusplus',
+    '}',
+    '#endif',
+    '',
+    f'#endif /* {guard_name} */',
+]
+
+# Generate .c file
+c_content = [
+    '#include <string.h>',
+    f'#include "{header_file.name}"',
+    f'#include "{mcu_name}_registers.h"',
+    '',
+    '#define REG_ENTRY(name, reg) \\',
+    '    { name, (void*)&(reg), sizeof(reg) }',
+    '',
+    'register_t* get_register(const char* name) {',
+    '    if (!name) return NULL;',
+    '    for (size_t i = 0; i < REGISTERS_COUNT; i++) {',
+    '        if (strcmp(hwregs[i].name, name) == 0) {',
+    '            return &hwregs[i];',
+    '        }',
+    '    }',
+    '    return NULL;',
+    '}',
+    '',
+    'register_t hwregs[REGISTERS_COUNT] = {',
+] + c_entries + [
+    '};',
+]
+
+# Create output directories
+inc_dir = base_path / "Drivers" / "Registers" / "Inc"
+src_dir = base_path / "Drivers" / "Registers" / "Src"
+inc_dir.mkdir(parents=True, exist_ok=True)
+src_dir.mkdir(parents=True, exist_ok=True)
+
+# Write files
+h_file = inc_dir / f"{mcu_name}_registers.h"
+c_file = src_dir / f"{mcu_name}_registers.c"
+
+try:
+    h_file.write_text('\n'.join(h_content), encoding='utf-8')
+    c_file.write_text('\n'.join(c_content), encoding='utf-8')
+    print(f"   Saved .h to: {h_file.relative_to(base_path)}")
+    print(f"   Saved .c to: {c_file.relative_to(base_path)}")
+except Exception as e:
+    print(f"Error writing files: {e}")
+    exit(1)
