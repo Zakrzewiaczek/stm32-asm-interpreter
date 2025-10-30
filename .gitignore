@@ -1,0 +1,36 @@
+# STM32CubeIDE
+Debug/
+Release/
+.settings/
+*.launch
+
+# Build artifacts
+*.o
+*.d
+*.su
+*.cyclo
+*.elf
+*.hex
+*.bin
+*.map
+*.list
+
+# Generated files
+*.ioc.bak
+
+# IDE files
+.project
+.cproject
+.mxproject
+
+# Python
+__pycache__/
+*.pyc
+Scripts/__pycache__/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
