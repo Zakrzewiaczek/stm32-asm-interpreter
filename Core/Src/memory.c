@@ -1,20 +1,18 @@
-/**
- * @file memory.c
- * @brief Safe memory access implementation
- *
- * Implements validated memory read/write operations for 8/16/32-bit access.
- */
-
 #include <stddef.h>
+#include <stdbool.h>
 #include "memory.h"
+#include "stack.h"
 #include "log.h"
 
 // TODO: Implement memory sectors with read/write permissions
 // When attempting write to read-only or read from write-only, return ERR_MEM_ACCESS_VIOLATION
 
-/**
- * @brief Safe 8-bit memory read with validation
- */
+void memory_init(void)
+{
+    memset((void *)RAM_START, 0, RAM_SIZE); // Clear RAM memory
+    LOG_DEBUG("RAM segment cleared");
+}
+
 result_t mem_read8(uint32_t addr, uint8_t *out_value)
 {
     if (out_value == NULL)
@@ -33,9 +31,6 @@ result_t mem_read8(uint32_t addr, uint8_t *out_value)
     return OK;
 }
 
-/**
- * @brief Safe 16-bit memory read with validation and alignment check
- */
 result_t mem_read16(uint32_t addr, uint16_t *out_value)
 {
     if (out_value == NULL)
@@ -59,9 +54,6 @@ result_t mem_read16(uint32_t addr, uint16_t *out_value)
     return OK;
 }
 
-/**
- * @brief Safe 32-bit memory read with validation and alignment check
- */
 result_t mem_read32(uint32_t addr, uint32_t *out_value)
 {
     if (out_value == NULL)
@@ -85,14 +77,21 @@ result_t mem_read32(uint32_t addr, uint32_t *out_value)
     return OK;
 }
 
-/**
- * @brief Safe 8-bit memory write with validation
- */
 result_t mem_write8(uint32_t addr, uint8_t value)
 {
     if (!mem_is_address_valid(addr))
     {
         RAISE_ERR(ERR_MEM_INVALID_ADDRESS, addr);
+    }
+
+    if (stack_is_valid_address(addr) && warnOnStackWrite)
+    {
+        LOG_WARN("Direct memory write to stack region: 0x%08lX", (uint32_t)addr);
+    }
+
+    if (stack_is_valid_address(addr) && warnOnStackWrite)
+    {
+        LOG_WARN("Direct memory write to stack region: 0x%08lX", (uint32_t)addr);
     }
 
     // Perform write
@@ -101,9 +100,6 @@ result_t mem_write8(uint32_t addr, uint8_t value)
     return OK;
 }
 
-/**
- * @brief Safe 16-bit memory write with validation and alignment check
- */
 result_t mem_write16(uint32_t addr, uint16_t value)
 {
     if (!mem_is_address_valid(addr))
@@ -116,15 +112,17 @@ result_t mem_write16(uint32_t addr, uint16_t value)
         RAISE_ERR(ERR_MEM_UNALIGNED_ACCESS, addr);
     }
 
+    if (stack_is_valid_address(addr) && warnOnStackWrite)
+    {
+        LOG_WARN("Direct memory write to stack region: 0x%08lX", (uint32_t)addr);
+    }
+
     // Perform write
     *(volatile uint16_t *)addr = value;
     LOG_DEBUG("mem_write16: [0x%08lX] <- 0x%04X", (uint32_t)addr, value);
     return OK;
 }
 
-/**
- * @brief Safe 32-bit memory write with validation and alignment check
- */
 result_t mem_write32(uint32_t addr, uint32_t value)
 {
     if (!mem_is_address_valid(addr))
@@ -137,8 +135,15 @@ result_t mem_write32(uint32_t addr, uint32_t value)
         RAISE_ERR(ERR_MEM_UNALIGNED_ACCESS, addr);
     }
 
+    if (stack_is_valid_address(addr) && warnOnStackWrite)
+    {
+        LOG_WARN("Direct memory write to stack region: 0x%08lX", (uint32_t)addr);
+    }
+
     // Perform write
     *(volatile uint32_t *)addr = value;
     LOG_DEBUG("mem_write32: [0x%08lX] <- 0x%08lX", (uint32_t)addr, (uint32_t)value);
     return OK;
 }
+
+bool warnOnStackWrite = true;

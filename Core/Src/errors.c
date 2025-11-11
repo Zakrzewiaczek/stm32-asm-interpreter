@@ -1,23 +1,9 @@
-/**
- * @file errors.c
- * @brief Error handling and reporting implementation
- *
- * Provides error code to string conversion and comprehensive error logging.
- * All error codes are mapped to human-readable descriptions.
- */
+
 
 #include "errors.h"
 #include "log.h"
 #include <stdio.h>
 
-/**
- * @brief Convert error code to human-readable string
- *
- * Maps each error code to descriptive message explaining the error.
- *
- * @param code Error code to convert
- * @return Constant string describing the error
- */
 const char *error_code_to_string(error_code_t code)
 {
     switch (code)
@@ -102,6 +88,16 @@ const char *error_code_to_string(error_code_t code)
     case ERR_MEM_OUT_OF_BOUNDS:
         return "Address exceeds memory bounds";
 
+    // Stack errors
+    case ERR_STACK_OVERFLOW:
+        return "Stack overflow - SP below STACK_BOTTOM";
+    case ERR_STACK_UNDERFLOW:
+        return "Stack underflow - SP at or above STACK_TOP";
+    case ERR_STACK_UNALIGNED:
+        return "Stack pointer not 4-byte aligned";
+    case ERR_STACK_CORRUPTED:
+        return "Stack corruption detected";
+
     // Execution errors
     case ERR_EXEC_INVALID_REGISTER:
         return "Invalid register number in execution";
@@ -115,10 +111,6 @@ const char *error_code_to_string(error_code_t code)
         return "Arithmetic underflow";
     case ERR_EXEC_LABEL_NOT_FOUND:
         return "Label not found";
-    case ERR_EXEC_STACK_OVERFLOW:
-        return "Stack overflow";
-    case ERR_EXEC_STACK_UNDERFLOW:
-        return "Stack underflow";
     case ERR_EXEC_INVALID_OPERATION:
         return "Invalid operation for current state";
 
@@ -135,9 +127,6 @@ const char *error_code_to_string(error_code_t code)
     }
 }
 
-/**
- * @brief Log error result with full context
- */
 void log_error_result(result_t res, const char *func_name)
 {
     if (res.code == ERR_OK)
@@ -163,10 +152,10 @@ void log_error_result(result_t res, const char *func_name)
     if (res.code == ERR_NULL_POINTER || // Bug: passing NULL to function
         res.code == ERR_INTERNAL)       // Internal inconsistency/bug
     {
-        LOG_CRITICAL("%s: [0x%02X] %s%s %s", func_name, res.code, error_msg, context_str, additional_msg);
+        LOG_CRITICAL("%s [0x%02X]: %s%s %s", func_name, res.code, error_msg, context_str, additional_msg);
     }
     else
     {
-        LOG_ERROR("%s: [0x%02X] %s%s %s", func_name, res.code, error_msg, context_str, additional_msg);
+        LOG_ERROR("%s [0x%02X]: %s%s %s", func_name, res.code, error_msg, context_str, additional_msg);
     }
 }

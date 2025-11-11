@@ -1,9 +1,12 @@
 /**
- * @file cpu.h
- * @brief ARM Cortex-M4 CPU state representation
+ * @file    cpu.h
+ * @brief   ARM Cortex-M4 CPU state and APSR flags
+ * @author  Jakub Zakrzewski
+ * @date    2025
  *
- * This module defines the simulated CPU state including general-purpose registers
- * and APSR (Application Program Status Register) flags.
+ * Provides the virtual CPU register file (R0-R15) and Application Program
+ * Status Register (APSR) with N, Z, C, V condition flags. This module
+ * emulates the ARM Cortex-M4 register set for the interpreter.
  */
 
 #ifndef CPU_H
@@ -16,58 +19,61 @@ extern "C"
 {
 #endif
 
-/** @defgroup CPU_Flags APSR Flag Positions and Masks
- * @brief Application Program Status Register (APSR) flag definitions
- * @{
- */
+    /** @defgroup APSR_Flags Application Program Status Register Flags
+     * @brief ARM APSR condition code flags (NZCV)
+     * @{
+     */
 
-/** Negative flag position (bit 31) */
-#define CPU_FLAG_N_Pos 31
-/** Zero flag position (bit 30) */
-#define CPU_FLAG_Z_Pos 30
-/** Carry flag position (bit 29) */
-#define CPU_FLAG_C_Pos 29
-/** Overflow flag position (bit 28) */
-#define CPU_FLAG_V_Pos 28
+#define CPU_FLAG_N_Pos 31 ///< Negative flag bit position
+#define CPU_FLAG_Z_Pos 30 ///< Zero flag bit position
+#define CPU_FLAG_C_Pos 29 ///< Carry flag bit position
+#define CPU_FLAG_V_Pos 28 ///< Overflow flag bit position
 
-/** Negative flag mask */
-#define CPU_FLAG_N_Msk (1UL << CPU_FLAG_N_Pos)
-/** Zero flag mask */
-#define CPU_FLAG_Z_Msk (1UL << CPU_FLAG_Z_Pos)
-/** Carry flag mask */
-#define CPU_FLAG_C_Msk (1UL << CPU_FLAG_C_Pos)
-/** Overflow flag mask */
-#define CPU_FLAG_V_Msk (1UL << CPU_FLAG_V_Pos)
+#define CPU_FLAG_N_Msk (1UL << CPU_FLAG_N_Pos) ///< Negative flag mask
+#define CPU_FLAG_Z_Msk (1UL << CPU_FLAG_Z_Pos) ///< Zero flag mask
+#define CPU_FLAG_C_Msk (1UL << CPU_FLAG_C_Pos) ///< Carry flag mask
+#define CPU_FLAG_V_Msk (1UL << CPU_FLAG_V_Pos) ///< Overflow flag mask
 
-/** Extract Negative flag value (0 or 1) */
+/** @brief Negative flag value */
 #define CPU_FLAG_N ((cpu.flags & CPU_FLAG_N_Msk) >> CPU_FLAG_N_Pos)
-/** Extract Zero flag value (0 or 1) */
+
+/** @brief Zero flag value */
 #define CPU_FLAG_Z ((cpu.flags & CPU_FLAG_Z_Msk) >> CPU_FLAG_Z_Pos)
-/** Extract Carry flag value (0 or 1) */
+
+/** @brief Carry flag value */
 #define CPU_FLAG_C ((cpu.flags & CPU_FLAG_C_Msk) >> CPU_FLAG_C_Pos)
-/** Extract Overflow flag value (0 or 1) */
+
+/** @brief Overflow flag value */
 #define CPU_FLAG_V ((cpu.flags & CPU_FLAG_V_Msk) >> CPU_FLAG_V_Pos)
 
     /** @} */
 
+    /** @defgroup Register_Aliases ARM Register Aliases
+     * @brief Standard ARM register name mappings
+     * @{
+     */
+
+#define CPU_SP 13 ///< Stack Pointer (R13)
+
+    /** @} */
+
     /**
-     * @brief ARM Cortex-M4 CPU state structure
+     * @brief CPU state structure
      *
-     * Contains general-purpose registers R0-R15 and APSR flags.
-     * R13 typically serves as Stack Pointer (SP), R14 as Link Register (LR),
-     * and R15 as Program Counter (PC).
+     * Represents the complete state of the virtual ARM CPU including
+     * general-purpose registers (R0-R15) and APSR flags.
      */
     typedef struct
     {
-        uint32_t R[16]; /**< General-purpose registers R0-R15 */
-        uint32_t flags; /**< Application Program Status Register (APSR) */
+        uint32_t R[16]; ///< General-purpose registers (R0-R15)
+        uint32_t flags; ///< APSR flags register
     } cpu_t;
 
     /**
-     * @brief Global CPU instance
+     * @brief Global CPU state instance
      *
-     * Represents the current state of the simulated CPU.
-     * Initialized with all registers and flags set to zero.
+     * Single instance of the virtual CPU state. All instruction handlers
+     * read from and write to this structure.
      */
     extern cpu_t cpu;
 

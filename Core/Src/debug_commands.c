@@ -1,20 +1,7 @@
-/**
- * @file debug_commands.c
- * @brief Debug command handlers for REPL interface
- *
- * Implements interactive debug commands starting with '.' prefix:
- * - Register inspection (.regs)
- * - Memory dump (.mem)
- * - Flag display (.flags)
- * - Log level control (.log)
- * - CPU reset (.reset)
- * - Screen clear (.clear)
- * - Help display (.help)
- */
-
 #include "debug_commands.h"
 #include "cpu.h"
 #include "memory.h"
+#include "stack.h"
 #include "log.h"
 #include <stdio.h>
 #include <string.h>
@@ -22,11 +9,6 @@
 #include <stdlib.h>
 #include <errno.h>
 
-/**
- * @brief Skip leading whitespace characters
- * @param p Input string pointer
- * @return Pointer to first non-whitespace character
- */
 static const char *skip_spaces(const char *p)
 {
     while (*p && isspace((uint8_t)*p))
@@ -34,15 +16,6 @@ static const char *skip_spaces(const char *p)
     return p;
 }
 
-/**
- * @brief Parse hexadecimal address from string
- *
- * Accepts addresses in format: 0x1234ABCD, 1234ABCD, etc.
- *
- * @param str Input string
- * @param out_addr Output parameter for parsed address
- * @return true on success, false on parse error
- */
 static bool parse_hex_address(const char *str, uint32_t *out_addr)
 {
     if (!str || !out_addr)
@@ -83,10 +56,7 @@ bool is_debug_command(const char *input)
     return (*p == '.');
 }
 
-// Display registers (all or specific)
-// Usage: .regs      - display all registers
-//        .regs <reg>   - display only <reg>
-static result_t cmd_regs(const char *args)
+result_t cmd_regs(const char *args)
 {
     // Check if specific register requested
     if (args && *args != '\0')
@@ -113,17 +83,21 @@ static result_t cmd_regs(const char *args)
         for (int j = 0; j < 4; j++)
         {
             int index = j + i * 4;
-            if (index >= sizeof(cpu.R) / sizeof(cpu.R[0]))
+            if (index >= (int)(sizeof(cpu.R) / sizeof(cpu.R[0])))
                 break;
-            printf("R%d%s -> 0x%08lX   ", index, (index < 10) ? " " : "", (uint32_t)cpu.R[index]);
+
+            // Display SP alias for R13
+            if (index == CPU_SP)
+                printf("SP  -> 0x%08lX   ", (uint32_t)cpu.R[index]);
+            else
+                printf("R%d%s -> 0x%08lX   ", index, (index < 10) ? " " : "", (uint32_t)cpu.R[index]);
         }
         printf("\r\n");
     }
     return OK;
 }
 
-// Display flags
-static result_t cmd_flags(void)
+result_t cmd_flags(void)
 {
     printf("APSR = 0x%08lX\r\n", (uint32_t)cpu.flags);
     printf("  N -> %ld\r\n", (int32_t)CPU_FLAG_N);
@@ -133,8 +107,7 @@ static result_t cmd_flags(void)
     return OK;
 }
 
-// Display CPU state (registers + flags)
-static result_t cmd_cpu(void)
+result_t cmd_cpu(void)
 {
     printf("[Registers]\r\n");
     cmd_regs(NULL);
@@ -143,8 +116,7 @@ static result_t cmd_cpu(void)
     return OK;
 }
 
-// Set log level: .log <level>
-static result_t cmd_log(const char *args)
+result_t cmd_log(const char *args)
 {
     if (!args || *args == '\0')
     {
@@ -181,8 +153,7 @@ static result_t cmd_log(const char *args)
     return OK;
 }
 
-// Display memory at address or range
-static result_t cmd_mem(const char *args)
+result_t cmd_mem(const char *args)
 {
     args = skip_spaces(args);
 
@@ -191,6 +162,9 @@ static result_t cmd_mem(const char *args)
         printf("RAM start addr:    %p\r\n", (void *)RAM_START);
         printf("RAM end addr:      %p\r\n", (void *)(RAM_END - 1));
         printf("RAM size:          %lu bytes (0x%lX)\r\n", (uint32_t)RAM_SIZE, (uint32_t)RAM_SIZE);
+        printf("STACK top addr:    %p\r\n", (void *)(STACK_TOP - 1));
+        printf("STACK bottom addr: %p\r\n", (void *)STACK_BOTTOM);
+        printf("STACK size:        %lu bytes (0x%lX)\r\n", (uint32_t)STACK_SIZE, (uint32_t)STACK_SIZE);
         printf("PERIPH start addr: %p\r\n", (void *)PERIPH_BASE);
         printf("PERIPH end addr:   %p\r\n", (void *)(PERIPH_BASE + PERIPH_SIZE - 1));
         printf("PERIPH size:       %lu bytes (0x%lX)\r\n", (uint32_t)PERIPH_SIZE, (uint32_t)PERIPH_SIZE);
@@ -322,8 +296,7 @@ static result_t cmd_mem(const char *args)
     return OK;
 }
 
-// Clear all registers
-static result_t cmd_clear(void)
+result_t cmd_clear(void)
 {
     for (int i = 0; i < 8; i++)
     {
@@ -333,8 +306,7 @@ static result_t cmd_clear(void)
     return OK;
 }
 
-// Reset CPU state
-static result_t cmd_reset(void)
+result_t cmd_reset(void)
 {
     for (int i = 0; i < 8; i++)
     {
@@ -346,7 +318,7 @@ static result_t cmd_reset(void)
 }
 
 // Full system dump
-static result_t cmd_dump(void)
+result_t cmd_dump(void)
 {
     printf("[Registers]\r\n");
     cmd_regs(NULL);

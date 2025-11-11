@@ -1,14 +1,4 @@
-/**
- * @file parser.c
- * @brief ARM assembly instruction parser implementation
- *
- * Implements comprehensive parsing of ARM assembly syntax including:
- * - Instruction mnemonics
- * - Register operands (R0-R15)
- * - Immediate values (decimal, hexadecimal, binary)
- * - Memory addressing modes (simple, offset, register offset, pre/post-indexed)
- * - Labels
- */
+
 
 #include "parser.h"
 #include "cpu.h"
@@ -20,11 +10,6 @@
 #include <errno.h>
 #include <limits.h>
 
-/**
- * @brief Skip whitespace characters
- * @param p Input string pointer
- * @return Pointer to first non-whitespace character
- */
 static const char *skip_spaces(const char *p)
 {
     while (*p && isspace((uint8_t)*p))
@@ -32,16 +17,6 @@ static const char *skip_spaces(const char *p)
     return p;
 }
 
-/**
- * @brief Parse register name
- *
- * Accepts register names in format: R0-R15 (case-insensitive).
- * Future support planned for SP, LR, PC aliases.
- *
- * @param p Input string pointer
- * @param out_consumed Output parameter for number of characters consumed (optional)
- * @return Register number (0-15) on success, -1 on error
- */
 static int parse_register(const char *p, size_t *out_consumed)
 {
     const char *start = p;
@@ -60,25 +35,12 @@ static int parse_register(const char *p, size_t *out_consumed)
         return (int)rn;
     }
 
-    // TODO: Add support for SP (R13), LR (R14), PC (R15) aliases
-    // if ((p[0] == 's' || p[0] == 'S') && (p[1] == 'p' || p[1] == 'P'))
-    // {
-    //     if (out_consumed)
-    //         *out_consumed = 2;
-    //     return 13;
-    // }
-    // if ((p[0] == 'l' || p[0] == 'L') && (p[1] == 'r' || p[1] == 'R'))
-    // {
-    //     if (out_consumed)
-    //         *out_consumed = 2;
-    //     return 14;
-    // }
-    // if ((p[0] == 'p' || p[0] == 'P') && (p[1] == 'c' || p[1] == 'C'))
-    // {
-    //     if (out_consumed)
-    //         *out_consumed = 2;
-    //     return 15;
-    // }
+    if ((p[0] == 's' || p[0] == 'S') && (p[1] == 'p' || p[1] == 'P'))
+    {
+        if (out_consumed)
+            *out_consumed = 2;
+        return 13;
+    }
 
     return -1;
 }
@@ -150,10 +112,56 @@ static result_t parse_memory_operand(const char *p, operand_t *op, size_t *out_c
 
     size_t consumed = 0;
     int base = parse_register(p, &consumed);
+
+    /*
+     * If base is not a register try to parse a symbolic register name
+     * (e.g. RCC_MODER). This enables syntax like: [RCC_MODER]
+     * The symbol is stored in op->value.label and operand type is
+     * OPERAND_MEM_SYMBOL. No offsets or writeback are supported with
+     * symbolic bracketed operands (for now).
+     */
     if (base < 0)
     {
-        RAISE_ERR(ERR_PARSE_INVALID_BASE_REG, (uint32_t)(p - start));
+        const char *id_start = p;
+        size_t id_len = 0;
+        while (isalnum((uint8_t)*p) || *p == '_')
+        {
+            p++;
+            id_len++;
+        }
+
+        if (id_len == 0)
+        {
+            RAISE_ERR(ERR_PARSE_INVALID_BASE_REG, (uint32_t)(p - start));
+        }
+
+        p = skip_spaces(p);
+
+        if (*p != ']')
+        {
+            // Symbol inside brackets must be alone: [SYMBOL]
+            RAISE_ERR(ERR_PARSE_INVALID_OPERAND, (uint32_t)(id_start - start));
+        }
+
+        // Advance p past ']'
+        p++;
+
+        // Set operand type FIRST before touching union members
+        op->type = OPERAND_MEM_SYMBOL;
+
+        // Copy symbol name into label field (truncate if necessary)
+        // IMPORTANT: This must be done AFTER setting type and INSTEAD of setting memory fields
+        // because operand_t uses a union - label and memory share the same memory space
+        size_t copy_len = (id_len < sizeof(op->value.label) - 1) ? id_len : (sizeof(op->value.label) - 1);
+        memcpy(op->value.label, id_start, copy_len);
+        op->value.label[copy_len] = '\0';
+
+        if (out_consumed)
+            *out_consumed = (size_t)(p - start);
+
+        return OK;
     }
+
     p += consumed;
     p = skip_spaces(p);
 

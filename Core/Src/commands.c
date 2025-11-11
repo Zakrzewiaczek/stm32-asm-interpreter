@@ -1,29 +1,10 @@
-/**
- * @file commands.c
- * @brief Instruction validation and execution implementation
- *
- * Contains the global instruction descriptor table mapping mnemonics to
- * their operand requirements and execution handlers. Provides validation
- * and execution dispatcher functions.
- */
+
 
 #include "commands.h"
 #include "log.h"
 #include "instr/commands_includes.h"
 #include <string.h>
 
-/**
- * @brief Global instruction descriptor table
- *
- * Defines all supported ARM instructions with their:
- * - Mnemonic string
- * - Operand count requirements (min/max)
- * - Allowed operand type patterns
- * - Optional custom validator
- * - Execution function
- *
- * Terminated by sentinel entry with NULL mnemonic.
- */
 const instruction_descriptor_t instructions[] = {
     // Data transfer instructions
     {"mov", 2, 2, {OP_REG, OP_REG | OP_IMM}, NULL, instr_mov},
@@ -37,23 +18,12 @@ const instruction_descriptor_t instructions[] = {
     {"strb", 2, 2, {OP_REG, OP_MEM_ALL}, NULL, instr_strb},
     {"strh", 2, 2, {OP_REG, OP_MEM_ALL}, NULL, instr_strh},
 
+    {"push", 1, 1, {OP_REG}, NULL, instr_push},
+    {"pop", 1, 1, {OP_REG}, NULL, instr_pop},
+
     // Sentinel (marks end of table)
     {NULL, 0, 0, {0}, NULL, NULL}};
 
-/**
- * @brief Validate instruction and operands
- *
- * Performs comprehensive validation:
- * 1. Checks if instruction exists
- * 2. Validates operand count
- * 3. Checks each operand type against allowed patterns
- * 4. Runs optional custom validator if defined
- *
- * @param mnemonic Instruction mnemonic string
- * @param operands Array of parsed operands
- * @param operand_count Number of operands
- * @return OK on success, error code with context on failure
- */
 result_t validate_instruction(const char *mnemonic, const operand_t *operands, uint8_t operand_count)
 {
     if (!mnemonic || !operands)

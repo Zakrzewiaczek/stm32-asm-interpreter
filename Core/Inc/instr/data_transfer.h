@@ -1,12 +1,13 @@
+
+
 /**
- * @file data_transfer.h
- * @brief Data transfer instructions (MOV, LDR, STR, PUSH, POP)
+ * @file    data_transfer.h
+ * @brief   ARM data transfer instruction implementations
+ * @author  Jakub Zakrzewski
+ * @date    2025
  *
- * Implements ARM data transfer instructions including:
- * - MOV/MOVS: Move data between registers or from immediate
- * - LDR/LDRB/LDRH: Load from memory to register (32/8/16-bit)
- * - STR/STRB/STRH: Store from register to memory (32/8/16-bit)
- * - PUSH/POP: Stack operations
+ * Implementation of ARM data transfer instructions including PUSH, POP, MOV, LDR,
+ * and STR variants with support for all ARM addressing modes
  */
 
 #ifndef INSTR_DATA_TRANSFER_H
@@ -23,107 +24,164 @@ extern "C"
 #endif
 
     /**
-     * @brief MOV instruction - Move data to register
+     * @brief MOV - Move data to register
+     *
+     * Transfers data from register or immediate value to destination register.
+     * Does not update condition flags.
      *
      * Syntax:
-     * - MOV Rd, Rm       (register to register)
-     * - MOV Rd, #imm     (immediate to register)
+     * - MOV Rd, Rm        (register to register)
+     * - MOV Rd, #imm      (immediate to register)
      *
-     * @param operands Array of operands (dest_reg, source)
-     * @param operand_count Number of operands (must be 2)
-     * @return Result with ERR_OK on success, error code otherwise
+     * @param[in] operands       Array of operands [dest_reg, source]
+     * @param[in] operand_count  Number of operands (must be 2)
+     *
+     * @retval OK                         Move successful
+     * @retval ERR_EXEC_INVALID_OPERAND_TYPE  Invalid operand type
      */
     result_t instr_mov(const operand_t *operands, uint8_t operand_count);
 
     /**
-     * @brief MOVS instruction - Move with flags update
+     * @brief MOVS - Move data with condition flags update
      *
-     * Same as MOV but updates N (negative) and Z (zero) flags based on result.
+     * Same as MOV but updates N (negative) and Z (zero) flags based
+     * on the result value.
      *
-     * @param operands Array of operands (dest_reg, source)
-     * @param operand_count Number of operands (must be 2)
-     * @return Result with ERR_OK on success, error code otherwise
+     * @param[in] operands       Array of operands [dest_reg, source]
+     * @param[in] operand_count  Number of operands (must be 2)
+     *
+     * @retval OK                         Move successful, flags updated
+     * @retval ERR_EXEC_INVALID_OPERAND_TYPE  Invalid operand type
      */
     result_t instr_movs(const operand_t *operands, uint8_t operand_count);
 
     /**
-     * @brief LDRB instruction - Load byte from memory
+     * @brief LDRB - Load byte from memory to register
      *
-     * Loads 8-bit value from memory into register (zero-extended to 32-bit).
-     * Supports all addressing modes.
+     * Loads an 8-bit value from memory and zero-extends to 32 bits.
+     * Supports all ARM addressing modes.
      *
-     * @param operands Array of operands (dest_reg, memory_operand)
-     * @param operand_count Number of operands (must be 2)
-     * @return Result with ERR_OK on success, error code otherwise
+     * @param[in] operands       Array of operands [dest_reg, memory_operand]
+     * @param[in] operand_count  Number of operands (must be 2)
+     *
+     * @retval OK       Load successful
+     * @retval ERR_MEM_*  Memory access error
      */
     result_t instr_ldrb(const operand_t *operands, uint8_t operand_count);
 
     /**
-     * @brief LDRH instruction - Load halfword from memory
+     * @brief LDRH - Load halfword from memory to register
      *
-     * Loads 16-bit value from memory into register (zero-extended to 32-bit).
-     * Requires 2-byte aligned address. Supports all addressing modes.
+     * Loads a 16-bit value from memory and zero-extends to 32 bits.
+     * Memory address must be 2-byte aligned.
      *
-     * @param operands Array of operands (dest_reg, memory_operand)
-     * @param operand_count Number of operands (must be 2)
-     * @return Result with ERR_OK on success, error code otherwise
+     * @param[in] operands       Array of operands [dest_reg, memory_operand]
+     * @param[in] operand_count  Number of operands (must be 2)
+     *
+     * @retval OK                        Load successful
+     * @retval ERR_MEM_UNALIGNED_ACCESS  Address not 2-byte aligned
+     * @retval ERR_MEM_*                 Memory access error
      */
     result_t instr_ldrh(const operand_t *operands, uint8_t operand_count);
 
     /**
-     * @brief LDR instruction - Load word from memory
+     * @brief LDR - Load word from memory to register
      *
-     * Loads 32-bit value from memory into register.
-     * Requires 4-byte aligned address.
+     * Loads a 32-bit value from memory to register.
+     * Memory address must be 4-byte aligned.
      *
-     * Supported addressing modes:
-     * - LDR Rd, [Rn]           (simple)
-     * - LDR Rd, [Rn, #offset]  (offset)
-     * - LDR Rd, [Rn, Rm]       (register offset)
-     * - LDR Rd, [Rn, #offset]! (pre-indexed with writeback)
-     * - LDR Rd, [Rn], #offset  (post-indexed with writeback)
+     * @param[in] operands       Array of operands [dest_reg, memory_operand]
+     * @param[in] operand_count  Number of operands (must be 2)
      *
-     * @param operands Array of operands (dest_reg, memory_operand)
-     * @param operand_count Number of operands (must be 2)
-     * @return Result with ERR_OK on success, error code otherwise
+     * @retval OK                        Load successful
+     * @retval ERR_MEM_UNALIGNED_ACCESS  Address not 4-byte aligned
+     * @retval ERR_MEM_*                 Memory access error
      */
     result_t instr_ldr(const operand_t *operands, uint8_t operand_count);
 
     /**
-     * @brief STRB instruction - Store byte to memory
+     * @brief STRB - Store byte from register to memory
      *
-     * Stores lower 8 bits of register to memory.
-     * Supports all addressing modes.
+     * Stores the lower 8 bits of a register to memory.
+     * Upper 24 bits are ignored.
      *
-     * @param operands Array of operands (source_reg, memory_operand)
-     * @param operand_count Number of operands (must be 2)
-     * @return Result with ERR_OK on success, error code otherwise
+     * @param[in] operands       Array of operands [source_reg, memory_operand]
+     * @param[in] operand_count  Number of operands (must be 2)
+     *
+     * @retval OK       Store successful
+     * @retval ERR_MEM_*  Memory access error
      */
     result_t instr_strb(const operand_t *operands, uint8_t operand_count);
 
     /**
-     * @brief STRH instruction - Store halfword to memory
+     * @brief STRH - Store halfword from register to memory
      *
-     * Stores lower 16 bits of register to memory.
-     * Requires 2-byte aligned address. Supports all addressing modes.
+     * Stores the lower 16 bits of a register to memory.
+     * Upper 16 bits are ignored. Memory address must be 2-byte aligned.
      *
-     * @param operands Array of operands (source_reg, memory_operand)
-     * @param operand_count Number of operands (must be 2)
-     * @return Result with ERR_OK on success, error code otherwise
+     * @param[in] operands       Array of operands [source_reg, memory_operand]
+     * @param[in] operand_count  Number of operands (must be 2)
+     *
+     * @retval OK                        Store successful
+     * @retval ERR_MEM_UNALIGNED_ACCESS  Address not 2-byte aligned
+     * @retval ERR_MEM_*                 Memory access error
      */
     result_t instr_strh(const operand_t *operands, uint8_t operand_count);
 
     /**
-     * @brief STR instruction - Store word to memory
+     * @brief STR - Store word from register to memory
      *
-     * Stores 32-bit register value to memory.
-     * Requires 4-byte aligned address. Supports all addressing modes.
+     * Stores a complete 32-bit register value to memory.
+     * Memory address must be 4-byte aligned.
      *
-     * @param operands Array of operands (source_reg, memory_operand)
-     * @param operand_count Number of operands (must be 2)
-     * @return Result with ERR_OK on success, error code otherwise
+     * @param[in] operands       Array of operands [source_reg, memory_operand]
+     * @param[in] operand_count  Number of operands (must be 2)
+     *
+     * @retval OK                        Store successful
+     * @retval ERR_MEM_UNALIGNED_ACCESS  Address not 4-byte aligned
+     * @retval ERR_MEM_*                 Memory access error
      */
     result_t instr_str(const operand_t *operands, uint8_t operand_count);
+
+    /**
+     * @brief PUSH - Push register onto stack
+     *
+     * Pushes a 32-bit register value onto the stack using ARM Full Descending
+     * convention (pre-decrement). Decrements SP by 4, then stores the value.
+     *
+     * Syntax:
+     * - PUSH Rn
+     *
+     * @param[in] operands       Array of operands [source_reg]
+     * @param[in] operand_count  Number of operands (must be 1)
+     *
+     * @retval OK                   Push successful
+     * @retval ERR_STACK_OVERFLOW   Stack full
+     * @retval ERR_MEM_*            Memory write error
+     *
+     * @note Updates SP register (R13)
+     */
+    result_t instr_push(const operand_t *operands, uint8_t operand_count);
+
+    /**
+     * @brief POP - Pop value from stack to register
+     *
+     * Pops a 32-bit value from the stack into a register using ARM Full
+     * Descending convention. Loads the value, then increments SP by 4.
+     *
+     * Syntax:
+     * - POP Rd
+     *
+     * @param[in] operands       Array of operands [dest_reg]
+     * @param[in] operand_count  Number of operands (must be 1)
+     *
+     * @retval OK                    Pop successful
+     * @retval ERR_STACK_UNDERFLOW   Stack empty
+     * @retval ERR_MEM_*             Memory read error
+     *
+     * @note Updates SP register (R13)
+     */
+    result_t instr_pop(const operand_t *operands, uint8_t operand_count);
 
 #ifdef __cplusplus
 }

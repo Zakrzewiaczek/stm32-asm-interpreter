@@ -1,9 +1,15 @@
+
+
 /**
- * @file parser.h
- * @brief ARM assembly instruction parser
+ * @file    parser.h
+ * @brief   ARM assembly instruction parser
+ * @author  Jakub Zakrzewski
+ * @date    2025
  *
- * Parses ARM assembly syntax into structured operand representations.
- * Supports registers, immediates, labels, and various memory addressing modes.
+ * Parses ARM assembly instruction strings into structured operand
+ * representations. Supports all standard ARM operand types including
+ * registers, immediates, and memory addressing modes with pre/post
+ * indexing and writeback.
  */
 
 #ifndef PARSER_H
@@ -12,129 +18,148 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "errors.h"
+#include "config.h"
 
 #ifdef __cplusplus
 extern "C"
 {
 #endif
-
     /**
-     * @brief Operand type enumeration
+     * @brief Operand type flags (bitfield)
      *
-     * Each type is a distinct bit flag, allowing bitmask operations for
-     * instruction operand pattern matching.
+     * Each operand type is represented by a unique bit position to allow
+     * bitwise combination for pattern matching in instruction descriptors.
      */
     typedef enum
     {
-        OPERAND_NONE = 0x00,      /**< No operand */
-        OPERAND_REGISTER = 0x01,  /**< Register operand (R0-R15) */
-        OPERAND_IMMEDIATE = 0x02, /**< Immediate value (#123, #0x1A, etc.) */
+        OPERAND_NONE = 0x00,      ///< No operand (placeholder)
+        OPERAND_REGISTER = 0x01,  ///< Register operand (R0-R15)
+        OPERAND_IMMEDIATE = 0x02, ///< Immediate value (#123)
 
-        // Memory addressing modes (separate bits for each mode)
-        OPERAND_MEM_SIMPLE = 0x04,     /**< Simple memory: [Rn] */
-        OPERAND_MEM_OFFSET = 0x08,     /**< Memory with offset: [Rn, #imm] */
-        OPERAND_MEM_REG_OFFSET = 0x10, /**< Memory with register offset: [Rn, Rm] */
-        OPERAND_MEM_PRE_INC = 0x20,    /**< Pre-indexed with writeback: [Rn, #imm]! */
-        OPERAND_MEM_POST_INC = 0x40,   /**< Post-indexed: [Rn], #imm */
+        /* Memory Addressing Modes ----------------------------------- */
+        OPERAND_MEM_SIMPLE = 0x04,     ///< Simple memory:   [Rn]
+        OPERAND_MEM_OFFSET = 0x08,     ///< Offset memory:   [Rn, #offset]
+        OPERAND_MEM_REG_OFFSET = 0x10, ///< Register offset: [Rn, Rm]
+        OPERAND_MEM_PRE_INC = 0x20,    ///< Pre-increment:   [Rn, #offset]!
+        OPERAND_MEM_POST_INC = 0x40,   ///< Post-increment:  [Rn], #offset
 
-        OPERAND_LABEL = 0x80 /**< Label (for branches, etc.) */
+        /**
+         * @brief Memory operand by symbolic register name: [RCC_MODER]
+         *
+         * Allows addressing using a named register or peripheral symbol
+         * defined in stm32l476xx_registers.h/.c. The symbol is stored in
+         * operand.value.label and resolved at execution time.
+         */
+        OPERAND_MEM_SYMBOL = 0x80,
+
+        /**
+         * @brief Generic label/symbol reference (non-memory)
+         *
+         * Reserved for future use (branch targets, literals, etc.).
+         */
+        OPERAND_LABEL = 0x100
     } operand_type_t;
 
-    /** @defgroup Parser_Type_Shortcuts Operand Type Shortcuts
-     * @brief Convenient short names for operand types
+    /** @defgroup Operand_Aliases Short Operand Type Names
+     * @brief Convenient aliases for operand types
      * @{
      */
 
-#define OP_REG OPERAND_REGISTER  /**< Register shortcut */
-#define OP_IMM OPERAND_IMMEDIATE /**< Immediate shortcut */
-#define OP_LABEL OPERAND_LABEL   /**< Label shortcut */
+#define OP_REG OPERAND_REGISTER  ///< Register operand alias
+#define OP_IMM OPERAND_IMMEDIATE ///< Immediate operand alias
+#define OP_LABEL OPERAND_LABEL   ///< Label operand alias
 
     /** @} */
 
-    /** @defgroup Parser_Memory_Shortcuts Memory Addressing Mode Shortcuts
-     * @brief Convenient short names for memory addressing modes
+    /** @defgroup Memory_Aliases Memory Addressing Mode Aliases
+     * @brief Convenient aliases for memory operand patterns
      * @{
      */
 
-#define OP_MEM_SIMPLE OPERAND_MEM_SIMPLE         /**< Simple memory [Rn] */
-#define OP_MEM_OFFSET OPERAND_MEM_OFFSET         /**< Offset memory [Rn, #imm] */
-#define OP_MEM_REG_OFFSET OPERAND_MEM_REG_OFFSET /**< Register offset [Rn, Rm] */
-#define OP_MEM_PRE OPERAND_MEM_PRE_INC           /**< Pre-indexed [Rn, #imm]! */
-#define OP_MEM_POST OPERAND_MEM_POST_INC         /**< Post-indexed [Rn], #imm */
+#define OP_MEM_SIMPLE OPERAND_MEM_SIMPLE         ///< [Rn] alias
+#define OP_MEM_OFFSET OPERAND_MEM_OFFSET         ///< [Rn, #offset] alias
+#define OP_MEM_REG_OFFSET OPERAND_MEM_REG_OFFSET ///< [Rn, Rm] alias
+#define OP_MEM_PRE OPERAND_MEM_PRE_INC           ///< [Rn, #offset]! alias
+#define OP_MEM_POST OPERAND_MEM_POST_INC         ///< [Rn], #offset alias
+#define OP_MEM_SYM OPERAND_MEM_SYMBOL            ///< [SYMBOL] alias
 
 /** @} */
 
-/** @defgroup Parser_Memory_Combinations Memory Addressing Combinations
- * @brief Combined memory addressing mode bitmasks
+/** @defgroup Memory_Groups Memory Operand Pattern Groups
+ * @brief Bitwise combinations for pattern matching
  * @{
  */
 
-/** Basic memory modes (simple, offset, register offset) */
+/**
+ * @brief Basic memory addressing modes (no writeback)
+ */
 #define OP_MEM_BASIC (OP_MEM_SIMPLE | OP_MEM_OFFSET | OP_MEM_REG_OFFSET)
 
-/** All memory addressing modes */
-#define OP_MEM_ALL (OP_MEM_SIMPLE | OP_MEM_OFFSET | OP_MEM_REG_OFFSET | OP_MEM_PRE | OP_MEM_POST)
+/**
+ * @brief All memory addressing modes
+ */
+#define OP_MEM_ALL (OP_MEM_SIMPLE | OP_MEM_OFFSET | OP_MEM_REG_OFFSET | OP_MEM_PRE | OP_MEM_POST | OP_MEM_SYM)
 
-/** Legacy compatibility - any memory mode */
+/**
+ * @brief Generic memory operand (all modes)
+ */
 #define OP_MEM OP_MEM_ALL
 
     /** @} */
 
     /**
-     * @brief Parsed operand structure
+     * @brief Parsed operand representation
      *
-     * Represents a single operand parsed from assembly instruction.
+     * Contains the operand type and value in a discriminated union.
      * The type field determines which union member is valid.
      */
     typedef struct
     {
-        operand_type_t type; /**< Type of operand */
+        operand_type_t type; ///< Operand type (determines union member)
 
         union
         {
-            uint8_t reg;        /**< Register number (R0-R15) for OPERAND_REGISTER */
-            uint32_t immediate; /**< Immediate value for OPERAND_IMMEDIATE */
+            uint8_t reg;        ///< Register number (0-15) for OPERAND_REGISTER
+            uint32_t immediate; ///< Immediate value for OPERAND_IMMEDIATE
 
             /**
              * @brief Memory operand details
              *
-             * Valid for all OPERAND_MEM_* types. The specific fields used depend
-             * on the addressing mode:
-             * - OPERAND_MEM_SIMPLE: only base_reg
-             * - OPERAND_MEM_OFFSET: base_reg + offset
-             * - OPERAND_MEM_REG_OFFSET: base_reg + offset_reg
-             * - OPERAND_MEM_PRE_INC: base_reg + offset, writeback=true
-             * - OPERAND_MEM_POST_INC: base_reg, offset, writeback=true
+             * Used for all memory addressing modes. The specific mode is
+             * determined by the type field.
              */
             struct
             {
-                uint8_t base_reg;   /**< Base register number */
-                uint32_t offset;    /**< Immediate offset value (signed, stored as uint32_t) */
-                uint8_t offset_reg; /**< Offset register number (0xFF = not used) */
-                bool writeback;     /**< Writeback flag for pre/post-indexed modes */
+                uint8_t base_reg;   ///< Base register (0-15)
+                uint32_t offset;    ///< Offset value (for offset modes)
+                uint8_t offset_reg; ///< Offset register (for reg offset mode)
+                bool writeback;     ///< Writeback flag (pre/post increment)
             } memory;
 
-            char label[32]; /**< Label name for OPERAND_LABEL (null-terminated) */
+            char label[32]; ///< Label name for OPERAND_LABEL (future)
         } value;
     } operand_t;
 
     /**
-     * @brief Parse instruction string into mnemonic and operands
+     * @brief Parse ARM assembly instruction string
      *
-     * Parses ARM assembly instruction syntax. The input string is analyzed to extract:
-     * - Instruction mnemonic (e.g., "mov", "ldr", "add")
-     * - Operands (registers, immediates, memory operands, labels)
+     * Parses a complete instruction line into mnemonic and operands.
+     * Handles all ARM operand types and addressing modes with full
+     * syntax validation.
      *
-     * Examples:
-     * - "mov r0, #123" -> mnemonic="mov", 2 operands (register, immediate)
-     * - "ldr r1, [r2, #4]" -> mnemonic="ldr", 2 operands (register, memory)
-     * - "str r3, [r4], #8" -> mnemonic="str", 2 operands (register, post-indexed memory)
+     * @param[in]  input          Instruction string (e.g., "MOV R0, #42")
+     * @param[out] mnemonic       Buffer for instruction mnemonic (min MAX_MNEMONIC_LENGTH)
+     * @param[out] operands       Array for parsed operands (min MAX_OPERANDS)
+     * @param[out] operand_count  Number of operands parsed
      *
-     * @param input Input string containing instruction (null-terminated)
-     * @param mnemonic Output buffer for mnemonic (must be at least 16 bytes)
-     * @param operands Output array for parsed operands (must have at least 3 elements)
-     * @param operand_count Output parameter for number of operands parsed
-     * @return Result with ERR_OK on success, error code with context on failure
+     * @retval OK                         Parsing successful
+     * @retval ERR_NULL_POINTER           Invalid input or output pointers
+     * @retval ERR_PARSE_EMPTY_MNEMONIC   No instruction mnemonic found
+     * @retval ERR_PARSE_INVALID_OPERAND  Malformed operand syntax
+     * @retval ERR_PARSE_TOO_MANY_OPERANDS  More than MAX_OPERANDS operands
+     * @retval ERR_PARSE_*               Other parsing errors (see errors.h)
+     *
+     * @note Output buffers must be properly sized according to config.h limits
      */
     result_t parse_instruction(const char *input, char *mnemonic, operand_t *operands, uint8_t *operand_count);
 
