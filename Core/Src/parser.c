@@ -23,67 +23,210 @@ static int parse_register(const char *p, size_t *out_consumed)
     if (!p)
         return -1;
 
-    // Accept lowercase/uppercase rN format
+    // Accept lowercase/uppercase rN format (R0-R15)
     if ((p[0] == 'r' || p[0] == 'R') && isdigit((uint8_t)p[1]))
     {
         char *endptr;
         int32_t rn = strtol(p + 1, &endptr, 10);
         if (rn < 0 || rn > 15)
             return -1;
+        // Make sure the next char is not alphanumeric (e.g., reject "R1X")
+        if (isalpha((uint8_t)*endptr) || *endptr == '_')
+            return -1;
         if (out_consumed)
             *out_consumed = (size_t)(endptr - start);
         return (int)rn;
     }
 
-    if ((p[0] == 's' || p[0] == 'S') && (p[1] == 'p' || p[1] == 'P'))
+    // SP = R13
+    if ((p[0] == 's' || p[0] == 'S') && (p[1] == 'p' || p[1] == 'P') && !isalnum((uint8_t)p[2]) && p[2] != '_')
     {
         if (out_consumed)
             *out_consumed = 2;
         return 13;
     }
 
+    // LR = R14
+    if ((p[0] == 'l' || p[0] == 'L') && (p[1] == 'r' || p[1] == 'R') && !isalnum((uint8_t)p[2]) && p[2] != '_')
+    {
+        if (out_consumed)
+            *out_consumed = 2;
+        return 14;
+    }
+
+    // PC = R15
+    if ((p[0] == 'p' || p[0] == 'P') && (p[1] == 'c' || p[1] == 'C') && !isalnum((uint8_t)p[2]) && p[2] != '_')
+    {
+        if (out_consumed)
+            *out_consumed = 2;
+        return 15;
+    }
+
     return -1;
 }
 
-// Parse immediate: must start with '#', supports decimal and 0x hex
-static result_t parse_immediate(const char *p, uint32_t *out_value, size_t *out_consumed)
+// Parse immediate: must start with '#', supports decimal, 0x hex, and negative values
+static result_t parse_immediate(const char *p, int32_t *out_value, size_t *out_consumed)
 {
     if (!p || !out_value)
         RAISE_ERR(ERR_NULL_POINTER, 0);
 
     if (*p != '#')
     {
-        RAISE_ERR(ERR_PARSE_IMMEDIATE_NO_HASH, (uint32_t)(p - p)); // Position 0
+        RAISE_ERR(ERR_PARSE_IMMEDIATE_NO_HASH, 0);
     }
 
+    const char *hash_pos = p;
     p++; // skip '#'
+
+    // Skip optional whitespace after #
+    while (*p && *p == ' ')
+        p++;
+
+    // Handle sign
+    bool negative = false;
+    if (*p == '-')
+    {
+        negative = true;
+        p++;
+    }
+    else if (*p == '+')
+    {
+        p++;
+    }
+
     const char *num_start = p;
+    (void)num_start;
 
     // Reset errno before calling strtoul
     errno = 0;
     char *endptr;
-    uint32_t val = strtoul(p, &endptr, 0);
+    unsigned long raw = strtoul(p, &endptr, 0);
 
     if (endptr == p)
     {
         RAISE_ERR(ERR_PARSE_INVALID_IMMEDIATE, 0);
     }
 
-    // Check if there are invalid characters after the number (e.g., 0.01, 0x1g)
-    if (*endptr != '\0' && *endptr != ',' && *endptr != ']' && !isspace((uint8_t)*endptr) && *endptr != ';' && *endptr != '@')
+    // Check if there are invalid characters after the number
+    if (*endptr != '\0' && *endptr != ',' && *endptr != ']' && *endptr != '!' && !isspace((uint8_t)*endptr) &&
+        *endptr != ';' && *endptr != '@' && *endptr != '}')
     {
         RAISE_ERR(ERR_PARSE_INVALID_IMMEDIATE_CHAR, (uint32_t)*endptr);
     }
 
-    // Check if value exceeds 32-bit range
+    // Check if value exceeds range
     if (errno == ERANGE)
     {
-        RAISE_ERR(ERR_PARSE_IMMEDIATE_OUT_OF_RANGE, (uint32_t)val);
+        RAISE_ERR(ERR_PARSE_IMMEDIATE_OUT_OF_RANGE, 0);
     }
 
-    *out_value = (uint32_t)val;
+    int32_t value = (int32_t)raw;
+    if (negative)
+        value = -value;
+
+    *out_value = value;
     if (out_consumed)
-        *out_consumed = (size_t)(endptr - num_start + 1); // include '#'
+        *out_consumed = (size_t)(endptr - hash_pos); // total consumed from '#'
+    return OK;
+}
+
+// Parse register list: {R0, R1, R2} or {R0-R3} or {R0-R3, LR}
+// Returns a 16-bit bitmask where bit N represents register RN
+static result_t parse_register_list(const char *p, operand_t *op, size_t *out_consumed)
+{
+    const char *start = p;
+    if (*p != '{')
+        RAISE_ERR(ERR_PARSE_INVALID_OPERAND, 0);
+
+    p++; // skip '{'
+    p = skip_spaces(p);
+
+    if (*p == '}')
+    {
+        RAISE_ERR(ERR_PARSE_EMPTY_REG_LIST, (uint32_t)(p - start));
+    }
+
+    uint16_t mask = 0;
+
+    while (*p && *p != '}')
+    {
+        p = skip_spaces(p);
+
+        // Parse a register
+        size_t consumed = 0;
+        int reg = parse_register(p, &consumed);
+        if (reg < 0)
+        {
+            RAISE_ERR(ERR_PARSE_INVALID_REG_LIST, (uint32_t)(p - start));
+        }
+
+        p += consumed;
+        p = skip_spaces(p);
+
+        // Check for range: R0-R3
+        if (*p == '-')
+        {
+            p++; // skip '-'
+            p = skip_spaces(p);
+
+            size_t end_consumed = 0;
+            int end_reg = parse_register(p, &end_consumed);
+            if (end_reg < 0)
+            {
+                RAISE_ERR(ERR_PARSE_INVALID_REG_LIST, (uint32_t)(p - start));
+            }
+            if (end_reg < reg)
+            {
+                RAISE_ERR(ERR_PARSE_INVALID_REG_RANGE, (uint32_t)((reg << 8) | end_reg));
+            }
+
+            // Set bits for the entire range
+            for (int r = reg; r <= end_reg; r++)
+            {
+                mask |= (uint16_t)(1 << r);
+            }
+
+            p += end_consumed;
+            p = skip_spaces(p);
+        }
+        else
+        {
+            // Single register
+            mask |= (uint16_t)(1 << reg);
+        }
+
+        // Expect comma or closing brace
+        if (*p == ',')
+        {
+            p++; // skip ','
+            p = skip_spaces(p);
+            if (*p == '}')
+            {
+                RAISE_ERR(ERR_PARSE_TRAILING_COMMA, (uint32_t)(p - start));
+            }
+        }
+        else if (*p != '}')
+        {
+            RAISE_ERR(ERR_PARSE_INVALID_REG_LIST, (uint32_t)(p - start));
+        }
+    }
+
+    if (*p != '}')
+    {
+        RAISE_ERR(ERR_PARSE_INVALID_REG_LIST, (uint32_t)(p - start));
+    }
+    p++; // skip '}'
+
+    if (mask == 0)
+    {
+        RAISE_ERR(ERR_PARSE_EMPTY_REG_LIST, 0);
+    }
+
+    op->type = OPERAND_REG_LIST;
+    op->value.reg_list = mask;
+    if (out_consumed)
+        *out_consumed = (size_t)(p - start);
     return OK;
 }
 
@@ -171,7 +314,7 @@ static result_t parse_memory_operand(const char *p, operand_t *op, size_t *out_c
         RAISE_ERR(ERR_PARSE_UNSUPPORTED_OPERATOR, (uint32_t)*p);
     }
 
-    uint32_t offset = 0;
+    int32_t offset = 0;
     uint8_t offset_reg = 0xFF; // 0xFF means no register offset
 
     if (*p == ',')
@@ -251,11 +394,13 @@ static result_t parse_memory_operand(const char *p, operand_t *op, size_t *out_c
         }
 
         size_t imm_consumed = 0;
-        result_t res = parse_immediate(p, &offset, &imm_consumed);
+        int32_t post_offset = 0;
+        result_t res = parse_immediate(p, &post_offset, &imm_consumed);
         if (is_error(res))
             return res;
 
         p += imm_consumed;
+        offset = post_offset;
         mem_type = OPERAND_MEM_POST_INC;
         writeback = true;
     }
@@ -295,6 +440,12 @@ static result_t parse_operand(const char *p, operand_t *op, size_t *out_consumed
         RAISE_ERR(ERR_PARSE_MISSING_OPERAND, 0);
     }
 
+    // register list {R0-R3, LR}
+    if (*p == '{')
+    {
+        return parse_register_list(p, op, out_consumed);
+    }
+
     // memory
     if (*p == '[')
     {
@@ -304,7 +455,7 @@ static result_t parse_operand(const char *p, operand_t *op, size_t *out_consumed
     // immediate
     if (*p == '#')
     {
-        uint32_t val = 0;
+        int32_t val = 0;
         size_t consumed = 0;
         result_t res = parse_immediate(p, &val, &consumed);
         if (is_error(res))
@@ -369,7 +520,7 @@ result_t parse_instruction(const char *input, char *mnemonic, operand_t *operand
     // parse operands separated by commas
     while (*p && *p != ';' && *p != '@')
     {
-        if (*operand_count >= 3)
+        if (*operand_count >= MAX_OPERANDS)
         {
             RAISE_ERR(ERR_PARSE_TOO_MANY_OPERANDS, *operand_count);
         }

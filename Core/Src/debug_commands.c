@@ -56,23 +56,72 @@ bool is_debug_command(const char *input)
     return (*p == '.');
 }
 
+static const char *reg_alias(int index)
+{
+    switch (index)
+    {
+    case 13:
+        return "SP";
+    case 14:
+        return "LR";
+    case 15:
+        return "PC";
+    default:
+        return NULL;
+    }
+}
+
+static int parse_debug_register(const char *p)
+{
+    if (!p)
+        return -1;
+    if ((p[0] == 's' || p[0] == 'S') && (p[1] == 'p' || p[1] == 'P') && (p[2] == '\0' || isspace((uint8_t)p[2])))
+        return 13;
+    if ((p[0] == 'l' || p[0] == 'L') && (p[1] == 'r' || p[1] == 'R') && (p[2] == '\0' || isspace((uint8_t)p[2])))
+        return 14;
+    if ((p[0] == 'p' || p[0] == 'P') && (p[1] == 'c' || p[1] == 'C') && (p[2] == '\0' || isspace((uint8_t)p[2])))
+        return 15;
+    if ((p[0] == 'r' || p[0] == 'R') && isdigit((uint8_t)p[1]))
+    {
+        int reg_num = p[1] - '0';
+        if (isdigit((uint8_t)p[2]))
+        {
+            reg_num = reg_num * 10 + (p[2] - '0');
+            if (p[3] != '\0' && !isspace((uint8_t)p[3]))
+                return -1;
+        }
+        else if (p[2] != '\0' && !isspace((uint8_t)p[2]))
+        {
+            return -1;
+        }
+        if (reg_num < 0 || reg_num > 15)
+            return -1;
+        return reg_num;
+    }
+    return -1;
+}
+
 result_t cmd_regs(const char *args)
 {
     // Check if specific register requested
     if (args && *args != '\0')
     {
         const char *p = skip_spaces(args);
+        int reg_num = parse_debug_register(p);
 
-        // Parse register name (r0, r1, ..., r7 or R0, R1, ..., R7)
-        if ((p[0] == 'r' || p[0] == 'R') && p[1] >= '0' && p[1] <= '7' && (p[2] == '\0' || isspace((uint8_t)p[2])))
+        if (reg_num >= 0)
         {
-            int reg_num = p[1] - '0';
-            printf("R%d -> 0x%08lX (%lu)\r\n", reg_num, (uint32_t)cpu.R[reg_num], (uint32_t)cpu.R[reg_num]);
+            const char *alias = reg_alias(reg_num);
+            if (alias)
+                printf("%s (R%d) -> 0x%08lX (%lu)\n", alias, reg_num, (uint32_t)cpu.R[reg_num],
+                       (uint32_t)cpu.R[reg_num]);
+            else
+                printf("R%d -> 0x%08lX (%lu)\n", reg_num, (uint32_t)cpu.R[reg_num], (uint32_t)cpu.R[reg_num]);
             return OK;
         }
         else
         {
-            printf("Error: Invalid register name. Use r0-r7 or R0-R7\r\n");
+            printf("Error: Invalid register name. Use r0-r15, sp, lr, pc\n");
             RAISE_ERR(ERR_INVALID_PARAMETER, 0);
         }
     }
@@ -86,32 +135,32 @@ result_t cmd_regs(const char *args)
             if (index >= (int)(sizeof(cpu.R) / sizeof(cpu.R[0])))
                 break;
 
-            // Display SP alias for R13
-            if (index == CPU_SP)
-                printf("SP  -> 0x%08lX   ", (uint32_t)cpu.R[index]);
+            const char *alias = reg_alias(index);
+            if (alias)
+                printf("%s  -> 0x%08lX   ", alias, (uint32_t)cpu.R[index]);
             else
                 printf("R%d%s -> 0x%08lX   ", index, (index < 10) ? " " : "", (uint32_t)cpu.R[index]);
         }
-        printf("\r\n");
+        printf("\n");
     }
     return OK;
 }
 
 result_t cmd_flags(void)
 {
-    printf("APSR = 0x%08lX\r\n", (uint32_t)cpu.flags);
-    printf("  N -> %ld\r\n", (int32_t)CPU_FLAG_N);
-    printf("  Z -> %ld\r\n", (int32_t)CPU_FLAG_Z);
-    printf("  C -> %ld\r\n", (int32_t)CPU_FLAG_C);
-    printf("  V -> %ld\r\n", (int32_t)CPU_FLAG_V);
+    printf("APSR = 0x%08lX\n", (uint32_t)cpu.flags);
+    printf("  N -> %ld\n", (int32_t)CPU_FLAG_N);
+    printf("  Z -> %ld\n", (int32_t)CPU_FLAG_Z);
+    printf("  C -> %ld\n", (int32_t)CPU_FLAG_C);
+    printf("  V -> %ld\n", (int32_t)CPU_FLAG_V);
     return OK;
 }
 
 result_t cmd_cpu(void)
 {
-    printf("[Registers]\r\n");
+    printf("[Registers]\n");
     cmd_regs(NULL);
-    printf("\r\n[Flags]\r\n");
+    printf("\n[Flags]\n");
     cmd_flags();
     return OK;
 }
@@ -122,7 +171,7 @@ result_t cmd_log(const char *args)
     {
         // Display current log level
         log_level_t current = get_log_level();
-        log_printf(current, "Current log level: %d\r\n", current);
+        log_printf(current, "Current log level: %d\n", current);
         return OK;
     }
 
@@ -135,21 +184,19 @@ result_t cmd_log(const char *args)
         int level_num = atoi(p);
         if (!validate_log_level(level_num))
         {
-            printf("Error: Incorrect log level\r\n");
+            printf("Error: Incorrect log level\n");
             RAISE_ERR(ERR_INVALID_PARAMETER, level_num);
-            return ERR(ERR_INVALID_PARAMETER, level_num);
         }
         new_level = (log_level_t)level_num;
     }
     else
     {
-        printf("Error: Unknown log level '%s'\r\n", p);
+        printf("Error: Unknown log level '%s'\n", p);
         RAISE_ERR(ERR_INVALID_PARAMETER, 0);
-        return ERR(ERR_INVALID_PARAMETER, 0);
     }
 
     set_log_level(new_level);
-    log_printf(new_level, "Setting log level to: %d\r\n", new_level);
+    log_printf(new_level, "Setting log level to: %d\n", new_level);
     return OK;
 }
 
@@ -159,15 +206,15 @@ result_t cmd_mem(const char *args)
 
     if (*args == '\0')
     {
-        printf("RAM start addr:    %p\r\n", (void *)RAM_START);
-        printf("RAM end addr:      %p\r\n", (void *)(RAM_END - 1));
-        printf("RAM size:          %lu bytes (0x%lX)\r\n", (uint32_t)RAM_SIZE, (uint32_t)RAM_SIZE);
-        printf("STACK top addr:    %p\r\n", (void *)(STACK_TOP - 1));
-        printf("STACK bottom addr: %p\r\n", (void *)STACK_BOTTOM);
-        printf("STACK size:        %lu bytes (0x%lX)\r\n", (uint32_t)STACK_SIZE, (uint32_t)STACK_SIZE);
-        printf("PERIPH start addr: %p\r\n", (void *)PERIPH_BASE);
-        printf("PERIPH end addr:   %p\r\n", (void *)(PERIPH_BASE + PERIPH_SIZE - 1));
-        printf("PERIPH size:       %lu bytes (0x%lX)\r\n", (uint32_t)PERIPH_SIZE, (uint32_t)PERIPH_SIZE);
+        printf("RAM start addr:    %p\n", (void *)RAM_START);
+        printf("RAM end addr:      %p\n", (void *)(RAM_END - 1));
+        printf("RAM size:          %lu bytes (0x%lX)\n", (uint32_t)RAM_SIZE, (uint32_t)RAM_SIZE);
+        printf("STACK top addr:    %p\n", (void *)(STACK_TOP - 1));
+        printf("STACK bottom addr: %p\n", (void *)STACK_BOTTOM);
+        printf("STACK size:        %lu bytes (0x%lX)\n", (uint32_t)STACK_SIZE, (uint32_t)STACK_SIZE);
+        printf("PERIPH start addr: %p\n", (void *)PERIPH_BASE);
+        printf("PERIPH end addr:   %p\n", (void *)(PERIPH_BASE + PERIPH_SIZE - 1));
+        printf("PERIPH size:       %lu bytes (0x%lX)\n", (uint32_t)PERIPH_SIZE, (uint32_t)PERIPH_SIZE);
         return OK;
     }
 
@@ -187,7 +234,7 @@ result_t cmd_mem(const char *args)
 
         if (!parse_hex_address(addr_str, &start_addr))
         {
-            printf("Invalid start address\r\n");
+            printf("Invalid start address\n");
             RAISE_ERR(ERR_INVALID_PARAMETER, 0);
         }
 
@@ -196,31 +243,33 @@ result_t cmd_mem(const char *args)
         uint32_t end_addr = 0;
         if (!parse_hex_address(end_str, &end_addr))
         {
-            printf("Invalid end address\r\n");
+            printf("Invalid end address\n");
             RAISE_ERR(ERR_INVALID_PARAMETER, 0);
         }
 
         if (end_addr < start_addr)
         {
-            printf("End address must be >= start address\r\n");
+            printf("End address must be >= start address\n");
             RAISE_ERR(ERR_INVALID_PARAMETER, 0);
         }
 
         // Display memory range
-        printf("\r\nmem [0x%08lX - 0x%08lX] \r\n", (uint32_t)start_addr, (uint32_t)end_addr);
+        printf("\nmem [0x%08lX - 0x%08lX] \n", (uint32_t)start_addr, (uint32_t)end_addr);
 
         log_level_t previous_level = get_log_level();
         set_log_level(LOG_LEVEL_WARNING); // Suppress mem_read32 debug logs
 
         uint32_t addr = start_addr & ~0x3; // Align to 4 bytes
         if (addr != start_addr)
-            LOG_WARN("Start address 0x%08lX is not 4-byte aligned, aligned down to 0x%08lX", (uint32_t)start_addr, (uint32_t)addr);
+            LOG_WARN("Start address 0x%08lX is not 4-byte aligned, aligned down to 0x%08lX", (uint32_t)start_addr,
+                     (uint32_t)addr);
         if (end_addr & 0x3)
         {
-            LOG_WARN("End address 0x%08lX is not 4-byte aligned, aligned down to 0x%08lX", (uint32_t)end_addr, (uint32_t)(end_addr & ~0x3));
+            LOG_WARN("End address 0x%08lX is not 4-byte aligned, aligned down to 0x%08lX", (uint32_t)end_addr,
+                     (uint32_t)(end_addr & ~0x3));
             end_addr &= ~0x3;
         }
-        printf("\r\n");
+        printf("\n");
         while (addr <= end_addr)
         {
             uint32_t value = 0;
@@ -235,9 +284,7 @@ result_t cmd_mem(const char *args)
                 uint8_t b3 = (value >> 24) & 0xFF;
 
                 // Display: address, 32-bit value, individual bytes, ASCII
-                printf("0x%08lX: 0x%08lX    %02X %02X %02X %02X    ",
-                       (uint32_t)addr, (uint32_t)value,
-                       b0, b1, b2, b3);
+                printf("0x%08lX: 0x%08lX    %02X %02X %02X %02X    ", (uint32_t)addr, (uint32_t)value, b0, b1, b2, b3);
 
                 // ASCII representation (printable chars only)
                 for (int i = 0; i < 4; i++)
@@ -248,11 +295,11 @@ result_t cmd_mem(const char *args)
                     else
                         printf(".");
                 }
-                printf("\r\n");
+                printf("\n");
             }
             else
             {
-                printf("0x%08lX: <read error>\r\n", (uint32_t)addr);
+                printf("0x%08lX: <read error>\n", (uint32_t)addr);
             }
 
             addr += 4;
@@ -260,7 +307,7 @@ result_t cmd_mem(const char *args)
             // Safety limit: max 64 words
             if ((addr - start_addr) > 256)
             {
-                printf("... (truncated, max 64 words)\r\n");
+                printf("... (truncated, max 64 words)\n");
                 break;
             }
         }
@@ -271,7 +318,7 @@ result_t cmd_mem(const char *args)
         // Single address
         if (!parse_hex_address(args, &start_addr))
         {
-            printf("Invalid address\r\n");
+            printf("Invalid address\n");
             RAISE_ERR(ERR_INVALID_PARAMETER, 0);
         }
 
@@ -287,10 +334,7 @@ result_t cmd_mem(const char *args)
             return res; // Propagate error (already logged)
         }
 
-        printf("mem [0x%08lX] -> 0x%08lX (%lu)\r\n\r\n",
-               (uint32_t)start_addr,
-               (uint32_t)value,
-               (uint32_t)value);
+        printf("mem [0x%08lX] -> 0x%08lX (%lu)\n\n", (uint32_t)start_addr, (uint32_t)value, (uint32_t)value);
     }
 
     return OK;
@@ -298,33 +342,35 @@ result_t cmd_mem(const char *args)
 
 result_t cmd_clear(void)
 {
-    for (int i = 0; i < 8; i++)
+    for (int i = 0; i < 16; i++)
     {
         cpu.R[i] = 0;
     }
-    printf("Registers cleared\r\n");
+    cpu.R[CPU_SP] = STACK_TOP; // Reset SP to top of stack
+    printf("Registers cleared\n");
     return OK;
 }
 
 result_t cmd_reset(void)
 {
-    for (int i = 0; i < 8; i++)
+    for (int i = 0; i < 16; i++)
     {
         cpu.R[i] = 0;
     }
+    cpu.R[CPU_SP] = STACK_TOP; // Reset SP to top of stack
     cpu.flags = 0;
-    printf("CPU reset done\r\n");
+    printf("CPU reset done\n");
     return OK;
 }
 
 // Full system dump
 result_t cmd_dump(void)
 {
-    printf("[Registers]\r\n");
+    printf("[Registers]\n");
     cmd_regs(NULL);
-    printf("\r\n[Flags]\r\n");
+    printf("\n[Flags]\n");
     cmd_flags();
-    printf("\r\n[Memory]\r\n");
+    printf("\n[Memory]\n");
     cmd_mem(NULL);
 
     return OK;
@@ -382,8 +428,8 @@ result_t execute_debug_command(const char *input)
         return cmd_dump();
     else
     {
-        printf("Unknown debug command: .%s\r\n", cmd);
-        printf("Available: .regs .flags .cpu .mem .log .clear .reset .dump\r\n");
+        printf("Unknown debug command: .%s\n", cmd);
+        printf("Available: .regs .flags .cpu .mem .log .clear .reset .dump\n");
         RAISE_ERR(ERR_NOT_IMPLEMENTED, 0);
     }
 }

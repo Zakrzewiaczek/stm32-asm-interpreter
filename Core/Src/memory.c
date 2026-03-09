@@ -89,11 +89,6 @@ result_t mem_write8(uint32_t addr, uint8_t value)
         LOG_WARN("Direct memory write to stack region: 0x%08lX", (uint32_t)addr);
     }
 
-    if (stack_is_valid_address(addr) && warnOnStackWrite)
-    {
-        LOG_WARN("Direct memory write to stack region: 0x%08lX", (uint32_t)addr);
-    }
-
     // Perform write
     *(volatile uint8_t *)addr = value;
     LOG_DEBUG("mem_write8: [0x%08lX] <- 0x%02X", (uint32_t)addr, value);

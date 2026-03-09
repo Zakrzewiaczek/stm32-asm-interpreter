@@ -61,6 +61,12 @@ const char *error_code_to_string(error_code_t code)
         return "Missing comma between operands";
     case ERR_PARSE_IMMEDIATE_OUT_OF_RANGE:
         return "Immediate value exceeds 32-bit range";
+    case ERR_PARSE_INVALID_REG_LIST:
+        return "Invalid register list syntax";
+    case ERR_PARSE_EMPTY_REG_LIST:
+        return "Empty register list {}";
+    case ERR_PARSE_INVALID_REG_RANGE:
+        return "Invalid register range (e.g., R5-R2)";
 
     // Validation errors
     case ERR_VALIDATE_UNKNOWN_INSTRUCTION:

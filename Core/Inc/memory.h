@@ -40,10 +40,10 @@ extern "C"
      * @{
      */
 
-#define PERIPH_SIZE 0x10000000UL                         ///< Peripheral region size (256 MB)
-#define RAM_START ((uint32_t)&__interpreter_ram_start__) ///< Interpreter RAM start address
-#define RAM_END ((uint32_t)&__interpreter_ram_end__)     ///< Interpreter RAM end address
-#define RAM_SIZE (RAM_END - RAM_START)                   ///< Interpreter RAM size
+#define PERIPH_SIZE 0x10000000UL                           ///< Peripheral region size (256 MB)
+#define RAM_START   ((uint32_t)&__interpreter_ram_start__) ///< Interpreter RAM start address
+#define RAM_END     ((uint32_t)&__interpreter_ram_end__)   ///< Interpreter RAM end address
+#define RAM_SIZE    (RAM_END - RAM_START)                  ///< Interpreter RAM size
 
     /** @} */
 

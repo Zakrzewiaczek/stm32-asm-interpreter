@@ -16,6 +16,149 @@
 #include "stm32l476xx_registers.h"
 
 /**
+ * @brief Result of memory address resolution
+ */
+typedef struct
+{
+    uint32_t addr;     ///< Resolved effective address
+    bool writeback;    ///< Whether base register should be updated
+    uint32_t new_base; ///< New base register value (if writeback)
+    uint8_t base_reg;  ///< Base register number (for writeback)
+} resolved_addr_t;
+
+/**
+ * @brief Resolve memory operand to effective address
+ *
+ * Computes the effective address for all ARM addressing modes.
+ * Handles pre/post indexing and writeback. The caller is responsible
+ * for actually performing the writeback after the memory access.
+ *
+ * @param[in]  mem_op    Memory operand to resolve
+ * @param[out] resolved  Resolved address information
+ * @param[in]  instr_name  Instruction name for debug logging
+ * @return Operation result
+ */
+static result_t resolve_memory_address(const operand_t *mem_op, resolved_addr_t *resolved, const char *instr_name)
+{
+    resolved->writeback = false;
+    resolved->new_base = 0;
+    resolved->base_reg = 0;
+
+    switch (mem_op->type)
+    {
+    case OPERAND_MEM_SIMPLE: // [Rn]
+    {
+        uint8_t base_reg = mem_op->value.memory.base_reg;
+        resolved->addr = cpu.R[base_reg];
+        LOG_DEBUG("%s: addr [R%d] = 0x%08lX", instr_name, base_reg, (uint32_t)resolved->addr);
+        break;
+    }
+
+    case OPERAND_MEM_OFFSET: // [Rn, #offset]
+    {
+        uint8_t base_reg = mem_op->value.memory.base_reg;
+        int32_t offset = mem_op->value.memory.offset;
+        resolved->addr = (uint32_t)((int32_t)cpu.R[base_reg] + offset);
+        LOG_DEBUG("%s: addr [R%d, #%ld] = 0x%08lX", instr_name, base_reg, (int32_t)offset, (uint32_t)resolved->addr);
+        break;
+    }
+
+    case OPERAND_MEM_REG_OFFSET: // [Rn, Rm]
+    {
+        uint8_t base_reg = mem_op->value.memory.base_reg;
+        uint8_t offset_reg = mem_op->value.memory.offset_reg;
+        resolved->addr = cpu.R[base_reg] + cpu.R[offset_reg];
+        LOG_DEBUG("%s: addr [R%d, R%d] = 0x%08lX", instr_name, base_reg, offset_reg, (uint32_t)resolved->addr);
+        break;
+    }
+
+    case OPERAND_MEM_PRE_INC: // [Rn, #offset]!
+    {
+        uint8_t base_reg = mem_op->value.memory.base_reg;
+        int32_t offset = mem_op->value.memory.offset;
+        resolved->addr = (uint32_t)((int32_t)cpu.R[base_reg] + offset);
+        resolved->writeback = true;
+        resolved->new_base = resolved->addr;
+        resolved->base_reg = base_reg;
+        LOG_DEBUG("%s: addr [R%d, #%ld]! = 0x%08lX", instr_name, base_reg, (int32_t)offset, (uint32_t)resolved->addr);
+        break;
+    }
+
+    case OPERAND_MEM_POST_INC: // [Rn], #offset
+    {
+        uint8_t base_reg = mem_op->value.memory.base_reg;
+        int32_t offset = mem_op->value.memory.offset;
+        resolved->addr = cpu.R[base_reg];
+        resolved->writeback = true;
+        resolved->new_base = (uint32_t)((int32_t)cpu.R[base_reg] + offset);
+        resolved->base_reg = base_reg;
+        LOG_DEBUG("%s: addr [R%d], #%ld = 0x%08lX", instr_name, base_reg, (int32_t)offset, (uint32_t)resolved->addr);
+        break;
+    }
+
+    case OPERAND_MEM_SYMBOL: // [SYMBOL]
+    {
+        const char *symbol = mem_op->value.label;
+        register_t *reg = get_register(symbol);
+        if (!reg)
+        {
+            LOG_ERROR("%s: Unknown register symbol '%s'", instr_name, symbol);
+            RAISE_ERR(ERR_PARSE_INVALID_OPERAND, 0);
+        }
+        resolved->addr = (uint32_t)reg->address;
+        LOG_DEBUG("%s: addr [%s] = 0x%08lX", instr_name, symbol, (uint32_t)resolved->addr);
+        break;
+    }
+
+    default:
+        RAISE_ERR(ERR_EXEC_INVALID_OPERAND_TYPE, mem_op->type);
+    }
+
+    return OK;
+}
+
+/**
+ * @brief Apply writeback to base register after memory access
+ */
+static void apply_writeback(const resolved_addr_t *resolved, const char *instr_name)
+{
+    if (resolved->writeback)
+    {
+        uint32_t old = cpu.R[resolved->base_reg];
+        cpu.R[resolved->base_reg] = resolved->new_base;
+        LOG_DEBUG("%s: R%d writeback: 0x%08lX -> 0x%08lX", instr_name, resolved->base_reg, (uint32_t)old,
+                  (uint32_t)resolved->new_base);
+    }
+}
+
+/**
+ * @brief Perform sized memory read
+ */
+static result_t mem_read_sized(uint32_t addr, uint32_t *out_value, uint8_t size)
+{
+    *out_value = 0;
+    if (size == 1)
+        return mem_read8(addr, (uint8_t *)out_value);
+    else if (size == 2)
+        return mem_read16(addr, (uint16_t *)out_value);
+    else
+        return mem_read32(addr, out_value);
+}
+
+/**
+ * @brief Perform sized memory write
+ */
+static result_t mem_write_sized(uint32_t addr, uint32_t value, uint8_t size)
+{
+    if (size == 1)
+        return mem_write8(addr, (uint8_t)value);
+    else if (size == 2)
+        return mem_write16(addr, (uint16_t)value);
+    else
+        return mem_write32(addr, value);
+}
+
+/**
  * @brief MOV instruction implementation
  *
  * Moves data from source operand to destination register without
@@ -79,205 +222,38 @@ result_t instr_movs(const operand_t *operands, uint8_t operand_count)
     if (result == 0)
         cpu.flags |= CPU_FLAG_Z_Msk; // Zero flag
 
-    LOG_DEBUG("MOVS: Flags updated: N=%d, Z=%d",
-              (cpu.flags & CPU_FLAG_N_Msk) != 0,
-              (cpu.flags & CPU_FLAG_Z_Msk) != 0);
+    LOG_DEBUG("MOVS: Flags updated: N=%d, Z=%d", (cpu.flags & CPU_FLAG_N_Msk) != 0, (cpu.flags & CPU_FLAG_Z_Msk) != 0);
     return OK;
 }
 
 /**
  * @brief Generic memory load operation
  *
- * Handles all ARM addressing modes for load operations with different
- * data sizes (8-bit, 16-bit, 32-bit). Supports pre-indexed, post-indexed,
- * and offset addressing modes.
- *
- * @param[in] operands       Array of operands [dest_reg, memory_operand]
- * @param[in] operand_count  Number of operands
- * @param[in] size          Data size in bytes (1, 2, or 4)
- * @return                  Operation result
+ * Uses resolve_memory_address() to compute effective address,
+ * then performs sized read and optional writeback.
  */
 static result_t load_from_memory(const operand_t *operands, uint8_t operand_count, uint8_t size)
 {
-    (void)operand_count; // Unused
+    (void)operand_count;
 
     uint8_t dest_reg = operands[0].value.reg;
+    const char *instr_name = (size == 1) ? "LDRB" : (size == 2) ? "LDRH" : "LDR";
+
+    resolved_addr_t resolved;
+    result_t res = resolve_memory_address(&operands[1], &resolved, instr_name);
+    if (is_error(res))
+        return res;
+
     uint32_t value = 0;
-    result_t res;
+    res = mem_read_sized(resolved.addr, &value, size);
+    if (is_error(res))
+        return res;
 
-    const char *instr_name = (size == 1) ? "LDRB" : (size == 2) ? "LDRH"
-                                                                : "LDR";
+    LOG_DEBUG("%s: R%d <- mem[0x%08lX] = 0x%08lX", instr_name, dest_reg, (uint32_t)resolved.addr, (uint32_t)value);
 
-    switch (operands[1].type)
-    {
-    case OPERAND_MEM_SIMPLE: // [Rn]
-    {
-        uint8_t base_reg = operands[1].value.memory.base_reg;
-        uint32_t addr = cpu.R[base_reg];
+    apply_writeback(&resolved, instr_name);
 
-        LOG_DEBUG("%s: Reading from [R%d] = 0x%08lX", instr_name, base_reg, (uint32_t)addr);
-
-        if (size == 1)
-            res = mem_read8(addr, (uint8_t *)&value);
-        else if (size == 2)
-            res = mem_read16(addr, (uint16_t *)&value);
-        else
-            res = mem_read32(addr, &value);
-
-        if (is_error(res))
-        {
-            return res;
-        }
-
-        LOG_DEBUG("%s: R%d <- mem[0x%08lX] = 0x%08lX", instr_name, dest_reg, (uint32_t)addr, (uint32_t)value);
-        break;
-    }
-
-    case OPERAND_MEM_OFFSET: // [Rn, #imm]
-    {
-        uint8_t base_reg = operands[1].value.memory.base_reg;
-        uint32_t addr = cpu.R[base_reg] + operands[1].value.memory.offset;
-
-        LOG_DEBUG("%s: Reading from [R%d, #%ld] = 0x%08lX",
-                  instr_name, base_reg, (int32_t)operands[1].value.memory.offset, (uint32_t)addr);
-
-        if (size == 1)
-            res = mem_read8(addr, (uint8_t *)&value);
-        else if (size == 2)
-            res = mem_read16(addr, (uint16_t *)&value);
-        else
-            res = mem_read32(addr, &value);
-
-        if (is_error(res))
-        {
-            return res;
-        }
-
-        LOG_DEBUG("%s: R%d <- mem[0x%08lX] = 0x%08lX", instr_name, dest_reg, (uint32_t)addr, (uint32_t)value);
-        break;
-    }
-
-    case OPERAND_MEM_REG_OFFSET: // [Rn, Rm]
-    {
-        uint8_t base_reg = operands[1].value.memory.base_reg;
-        uint8_t offset_reg = operands[1].value.memory.offset_reg;
-        uint32_t addr = cpu.R[base_reg] + cpu.R[offset_reg];
-
-        LOG_DEBUG("%s: Reading from [R%d, R%d] = 0x%08lX",
-                  instr_name, base_reg, offset_reg, (uint32_t)addr);
-
-        if (size == 1)
-            res = mem_read8(addr, (uint8_t *)&value);
-        else if (size == 2)
-            res = mem_read16(addr, (uint16_t *)&value);
-        else
-            res = mem_read32(addr, &value);
-
-        if (is_error(res))
-        {
-            return res;
-        }
-
-        LOG_DEBUG("%s: R%d <- mem[0x%08lX] = 0x%08lX", instr_name, dest_reg, (uint32_t)addr, (uint32_t)value);
-        break;
-    }
-
-    case OPERAND_MEM_PRE_INC: // [Rn, #imm]!
-    {
-        uint8_t base_reg = operands[1].value.memory.base_reg;
-        uint32_t addr = cpu.R[base_reg] + operands[1].value.memory.offset;
-
-        LOG_DEBUG("%s: Reading from [R%d, #%ld]! = 0x%08lX",
-                  instr_name, base_reg, (int32_t)operands[1].value.memory.offset, (uint32_t)addr);
-
-        if (size == 1)
-            res = mem_read8(addr, (uint8_t *)&value);
-        else if (size == 2)
-            res = mem_read16(addr, (uint16_t *)&value);
-        else
-            res = mem_read32(addr, &value);
-
-        if (is_error(res))
-        {
-            return res;
-        }
-
-        LOG_DEBUG("%s: R%d <- mem[0x%08lX] = 0x%08lX", instr_name, dest_reg, (uint32_t)addr, (uint32_t)value);
-
-        uint32_t old_addr = cpu.R[base_reg];
-        cpu.R[base_reg] = addr;
-        LOG_DEBUG("%s: R%d writeback: 0x%08lX -> 0x%08lX", instr_name, base_reg, (uint32_t)old_addr, (uint32_t)cpu.R[base_reg]);
-
-        break;
-    }
-
-    case OPERAND_MEM_POST_INC: // [Rn], #imm
-    {
-        uint8_t base_reg = operands[1].value.memory.base_reg;
-        uint32_t addr = cpu.R[base_reg];
-
-        LOG_DEBUG("%s: Reading from [R%d], #%ld = 0x%08lX",
-                  instr_name, base_reg, (int32_t)operands[1].value.memory.offset, (uint32_t)addr);
-
-        if (size == 1)
-            res = mem_read8(addr, (uint8_t *)&value);
-        else if (size == 2)
-            res = mem_read16(addr, (uint16_t *)&value);
-        else
-            res = mem_read32(addr, &value);
-
-        if (is_error(res))
-        {
-            return res;
-        }
-
-        LOG_DEBUG("%s: R%d <- mem[0x%08lX] = 0x%08lX", instr_name, dest_reg, (uint32_t)addr, (uint32_t)value);
-
-        uint32_t old_addr = cpu.R[base_reg];
-        cpu.R[base_reg] += operands[1].value.memory.offset;
-        LOG_DEBUG("%s: R%d post-increment: 0x%08lX -> 0x%08lX", instr_name, base_reg, (uint32_t)old_addr, (uint32_t)cpu.R[base_reg]);
-
-        break;
-    }
-
-    case OPERAND_MEM_SYMBOL: // [SYMBOL]
-    {
-        const char *symbol = operands[1].value.label;
-        register_t *reg = get_register(symbol);
-
-        if (!reg)
-        {
-            LOG_ERROR("%s: Unknown register symbol '%s'", instr_name, symbol);
-            RAISE_ERR(ERR_PARSE_INVALID_OPERAND, 0);
-        }
-
-        uint32_t addr = (uint32_t)reg->address;
-        LOG_DEBUG("%s: Reading from [%s] = 0x%08lX", instr_name, symbol, addr);
-
-        if (size == 1)
-            res = mem_read8(addr, (uint8_t *)&value);
-        else if (size == 2)
-            res = mem_read16(addr, (uint16_t *)&value);
-        else
-            res = mem_read32(addr, &value);
-
-        if (is_error(res))
-        {
-            return res;
-        }
-
-        LOG_DEBUG("%s: R%d <- mem[%s @ 0x%08lX] = 0x%08lX",
-                  instr_name, dest_reg, symbol, addr, (uint32_t)value);
-        break;
-    }
-
-    default:
-        RAISE_ERR(ERR_EXEC_INVALID_OPERAND_TYPE, operands[1].type);
-    }
-
-    // Store result in destination register
     cpu.R[dest_reg] = value;
-    LOG_DEBUG("%s: R%d = 0x%08lX", instr_name, dest_reg, (uint32_t)value);
     return OK;
 }
 
@@ -308,192 +284,30 @@ result_t instr_ldr(const operand_t *operands, uint8_t operand_count)
 /**
  * @brief Generic memory store operation
  *
- * Handles all ARM addressing modes for store operations with different
- * data sizes (8-bit, 16-bit, 32-bit). Supports pre-indexed, post-indexed,
- * and offset addressing modes.
- *
- * @param[in] operands       Array of operands [source_reg, memory_operand]
- * @param[in] operand_count  Number of operands
- * @param[in] size          Data size in bytes (1, 2, or 4)
- * @return                  Operation result
+ * Uses resolve_memory_address() to compute effective address,
+ * then performs sized write and optional writeback.
  */
 static result_t write_to_memory(const operand_t *operands, uint8_t operand_count, uint8_t size)
 {
-    (void)operand_count; // Unused
+    (void)operand_count;
 
     uint8_t source_reg = operands[0].value.reg;
     uint32_t value = cpu.R[source_reg];
-    result_t res;
+    const char *instr_name = (size == 1) ? "STRB" : (size == 2) ? "STRH" : "STR";
 
-    const char *instr_name = (size == 1) ? "STRB" : (size == 2) ? "STRH"
-                                                                : "STR";
+    resolved_addr_t resolved;
+    result_t res = resolve_memory_address(&operands[1], &resolved, instr_name);
+    if (is_error(res))
+        return res;
 
-    switch (operands[1].type)
-    {
-    case OPERAND_MEM_SIMPLE: // [Rn]
-    {
-        uint8_t base_reg = operands[1].value.memory.base_reg;
-        uint32_t addr = cpu.R[base_reg];
+    res = mem_write_sized(resolved.addr, value, size);
+    if (is_error(res))
+        return res;
 
-        LOG_DEBUG("%s: Reading from [R%d] = 0x%08lX", instr_name, base_reg, (uint32_t)addr);
+    LOG_DEBUG("%s: mem[0x%08lX] <- R%d = 0x%08lX", instr_name, (uint32_t)resolved.addr, source_reg, (uint32_t)value);
 
-        if (size == 1)
-            res = mem_write8(addr, (uint8_t)value);
-        else if (size == 2)
-            res = mem_write16(addr, (uint16_t)value);
-        else
-            res = mem_write32(addr, value);
+    apply_writeback(&resolved, instr_name);
 
-        if (is_error(res))
-        {
-            return res;
-        }
-
-        LOG_DEBUG("%s: mem[0x%08lX] <- R%d = 0x%08lX", instr_name, (uint32_t)addr, source_reg, (uint32_t)value);
-        break;
-    }
-
-    case OPERAND_MEM_OFFSET: // [Rn, #imm]
-    {
-        uint8_t base_reg = operands[1].value.memory.base_reg;
-        uint32_t addr = cpu.R[base_reg] + operands[1].value.memory.offset;
-
-        LOG_DEBUG("%s: Writing to [R%d, #%ld] = 0x%08lX",
-                  instr_name, base_reg, (int32_t)operands[1].value.memory.offset, (uint32_t)addr);
-
-        if (size == 1)
-            res = mem_write8(addr, (uint8_t)value);
-        else if (size == 2)
-            res = mem_write16(addr, (uint16_t)value);
-        else
-            res = mem_write32(addr, value);
-
-        if (is_error(res))
-        {
-            return res;
-        }
-
-        LOG_DEBUG("%s: mem[0x%08lX] <- R%d = 0x%08lX", instr_name, (uint32_t)addr, source_reg, (uint32_t)value);
-        break;
-    }
-
-    case OPERAND_MEM_REG_OFFSET: // [Rn, Rm]
-    {
-        uint8_t base_reg = operands[1].value.memory.base_reg;
-        uint8_t offset_reg = operands[1].value.memory.offset_reg;
-        uint32_t addr = cpu.R[base_reg] + cpu.R[offset_reg];
-
-        LOG_DEBUG("%s: Writing to [R%d, R%d] = 0x%08lX",
-                  instr_name, base_reg, offset_reg, (uint32_t)addr);
-
-        if (size == 1)
-            res = mem_write8(addr, (uint8_t)value);
-        else if (size == 2)
-            res = mem_write16(addr, (uint16_t)value);
-        else
-            res = mem_write32(addr, value);
-
-        if (is_error(res))
-        {
-            return res;
-        }
-
-        LOG_DEBUG("%s: mem[0x%08lX] <- R%d = 0x%08lX", instr_name, (uint32_t)addr, source_reg, (uint32_t)value);
-        break;
-    }
-
-    case OPERAND_MEM_PRE_INC: // [Rn, #imm]!
-    {
-        uint8_t base_reg = operands[1].value.memory.base_reg;
-        uint32_t addr = cpu.R[base_reg] + operands[1].value.memory.offset;
-
-        LOG_DEBUG("%s: Writing to [R%d, #%ld]! = 0x%08lX",
-                  instr_name, base_reg, (int32_t)operands[1].value.memory.offset, (uint32_t)addr);
-
-        if (size == 1)
-            res = mem_write8(addr, (uint8_t)value);
-        else if (size == 2)
-            res = mem_write16(addr, (uint16_t)value);
-        else
-            res = mem_write32(addr, value);
-
-        if (is_error(res))
-        {
-            return res;
-        }
-
-        LOG_DEBUG("%s: mem[0x%08lX] <- R%d = 0x%08lX", instr_name, (uint32_t)addr, source_reg, (uint32_t)value);
-
-        uint32_t old_addr = cpu.R[base_reg];
-        cpu.R[base_reg] = addr;
-        LOG_DEBUG("%s: R%d writeback: 0x%08lX -> 0x%08lX", instr_name, base_reg, (uint32_t)old_addr, (uint32_t)cpu.R[base_reg]);
-
-        break;
-    }
-
-    case OPERAND_MEM_POST_INC: // [Rn], #imm
-    {
-        uint8_t base_reg = operands[1].value.memory.base_reg;
-        uint32_t addr = cpu.R[base_reg];
-
-        LOG_DEBUG("%s: Writing to [R%d], #%ld = 0x%08lX",
-                  instr_name, base_reg, (int32_t)operands[1].value.memory.offset, (uint32_t)addr);
-
-        if (size == 1)
-            res = mem_write8(addr, (uint8_t)value);
-        else if (size == 2)
-            res = mem_write16(addr, (uint16_t)value);
-        else
-            res = mem_write32(addr, value);
-
-        if (is_error(res))
-        {
-            return res;
-        }
-
-        LOG_DEBUG("%s: mem[0x%08lX] <- R%d = 0x%08lX", instr_name, (uint32_t)addr, source_reg, (uint32_t)value);
-
-        uint32_t old_addr = cpu.R[base_reg];
-        cpu.R[base_reg] += operands[1].value.memory.offset;
-        LOG_DEBUG("%s: R%d post-increment: 0x%08lX -> 0x%08lX", instr_name, base_reg, (uint32_t)old_addr, (uint32_t)cpu.R[base_reg]);
-
-        break;
-    }
-
-    case OPERAND_MEM_SYMBOL: // [SYMBOL] - symbolic register name
-    {
-        const char *symbol = operands[1].value.label;
-        register_t *reg = get_register(symbol);
-
-        if (!reg)
-        {
-            LOG_ERROR("%s: Unknown register symbol '%s'", instr_name, symbol);
-            RAISE_ERR(ERR_PARSE_INVALID_OPERAND, 0);
-        }
-
-        uint32_t addr = (uint32_t)reg->address;
-        LOG_DEBUG("%s: Writing to [%s] = 0x%08lX", instr_name, symbol, addr);
-
-        if (size == 1)
-            res = mem_write8(addr, (uint8_t)value);
-        else if (size == 2)
-            res = mem_write16(addr, (uint16_t)value);
-        else
-            res = mem_write32(addr, value);
-
-        if (is_error(res))
-        {
-            return res;
-        }
-
-        LOG_DEBUG("%s: mem[%s @ 0x%08lX] <- R%d = 0x%08lX",
-                  instr_name, symbol, addr, source_reg, (uint32_t)value);
-        break;
-    }
-
-    default:
-        RAISE_ERR(ERR_EXEC_INVALID_OPERAND_TYPE, operands[1].type);
-    }
     return OK;
 }
 
@@ -516,9 +330,6 @@ result_t instr_strh(const operand_t *operands, uint8_t operand_count)
 /**
  * @brief STR instruction implementation - Store word
  */
-/**
- * @brief STR instruction implementation - Store word
- */
 result_t instr_str(const operand_t *operands, uint8_t operand_count)
 {
     return write_to_memory(operands, operand_count, 4);
@@ -527,22 +338,38 @@ result_t instr_str(const operand_t *operands, uint8_t operand_count)
 /**
  * @brief PUSH instruction implementation
  *
- * Pushes a register value onto the stack using ARM Full Descending convention.
- * The stack pointer is decremented before storing the value.
+ * Pushes a single register or a register list onto the stack
+ * using ARM Full Descending convention.
+ * The stack pointer is decremented before storing each value.
+ * Registers are pushed from highest to lowest number.
  */
 result_t instr_push(const operand_t *operands, uint8_t operand_count)
 {
-    (void)operand_count; // Unused
-
-    uint8_t source_reg = operands[0].value.reg;
-    uint32_t value = cpu.R[source_reg];
+    (void)operand_count;
     result_t res;
 
-    res = stack_push(value);
-
-    if (is_error(res))
+    if (operands[0].type == OPERAND_REG_LIST)
     {
-        return res;
+        uint16_t reg_list = operands[0].value.reg_list;
+        // Push from highest register to lowest (ARM convention)
+        for (int i = 15; i >= 0; i--)
+        {
+            if (reg_list & (1 << i))
+            {
+                res = stack_push(cpu.R[i]);
+                if (is_error(res))
+                    return res;
+                LOG_DEBUG("PUSH: R%d = 0x%08lX", i, (uint32_t)cpu.R[i]);
+            }
+        }
+    }
+    else
+    {
+        uint8_t source_reg = operands[0].value.reg;
+        res = stack_push(cpu.R[source_reg]);
+        if (is_error(res))
+            return res;
+        LOG_DEBUG("PUSH: R%d = 0x%08lX", source_reg, (uint32_t)cpu.R[source_reg]);
     }
 
     return OK;
@@ -551,24 +378,43 @@ result_t instr_push(const operand_t *operands, uint8_t operand_count)
 /**
  * @brief POP instruction implementation
  *
- * Pops a value from the stack into a register using ARM Full Descending convention.
- * The value is loaded first, then the stack pointer is incremented.
+ * Pops a value or a register list from the stack into registers
+ * using ARM Full Descending convention.
+ * Values are loaded first, then the stack pointer is incremented.
+ * Registers are popped from lowest to highest number.
  */
 result_t instr_pop(const operand_t *operands, uint8_t operand_count)
 {
-    (void)operand_count; // Unused
-
-    uint8_t dest_reg = operands[0].value.reg;
-    uint32_t value;
+    (void)operand_count;
     result_t res;
 
-    res = stack_pop(&value);
-
-    if (is_error(res))
+    if (operands[0].type == OPERAND_REG_LIST)
     {
-        return res;
+        uint16_t reg_list = operands[0].value.reg_list;
+        // Pop from lowest register to highest (ARM convention)
+        for (int i = 0; i <= 15; i++)
+        {
+            if (reg_list & (1 << i))
+            {
+                uint32_t value;
+                res = stack_pop(&value);
+                if (is_error(res))
+                    return res;
+                cpu.R[i] = value;
+                LOG_DEBUG("POP: R%d = 0x%08lX", i, (uint32_t)value);
+            }
+        }
+    }
+    else
+    {
+        uint8_t dest_reg = operands[0].value.reg;
+        uint32_t value;
+        res = stack_pop(&value);
+        if (is_error(res))
+            return res;
+        cpu.R[dest_reg] = value;
+        LOG_DEBUG("POP: R%d = 0x%08lX", dest_reg, (uint32_t)value);
     }
 
-    cpu.R[dest_reg] = value;
     return OK;
 }

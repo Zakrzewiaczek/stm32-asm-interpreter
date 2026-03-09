@@ -39,7 +39,7 @@ extern "C"
         const char *mnemonic;                                      ///< Instruction mnemonic (e.g., "MOV", "ADD")
         uint8_t min_operands;                                      ///< Minimum number of operands required
         uint8_t max_operands;                                      ///< Maximum number of operands allowed
-        uint16_t operand_patterns[4];                              ///< Valid operand type patterns per position
+        uint32_t operand_patterns[4];                              ///< Valid operand type patterns per position
         result_t (*validate)(const operand_t *ops, uint8_t count); ///< Custom validation function (optional)
         result_t (*execute)(const operand_t *ops, uint8_t count);  ///< Instruction execution handler
     } instruction_descriptor_t;

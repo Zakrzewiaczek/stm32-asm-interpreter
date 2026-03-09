@@ -18,11 +18,26 @@ const instruction_descriptor_t instructions[] = {
     {"strb", 2, 2, {OP_REG, OP_MEM_ALL}, NULL, instr_strb},
     {"strh", 2, 2, {OP_REG, OP_MEM_ALL}, NULL, instr_strh},
 
-    {"push", 1, 1, {OP_REG}, NULL, instr_push},
-    {"pop", 1, 1, {OP_REG}, NULL, instr_pop},
+    {"push", 1, 1, {OP_REG | OP_REG_LIST}, NULL, instr_push},
+    {"pop", 1, 1, {OP_REG | OP_REG_LIST}, NULL, instr_pop},
 
     // Sentinel (marks end of table)
     {NULL, 0, 0, {0}, NULL, NULL}};
+
+/**
+ * @brief Find an instruction descriptor by mnemonic.
+ */
+static const instruction_descriptor_t *find_instruction(const char *mnemonic)
+{
+    for (int i = 0; instructions[i].mnemonic != NULL; i++)
+    {
+        if (strcmp(instructions[i].mnemonic, mnemonic) == 0)
+        {
+            return &instructions[i];
+        }
+    }
+    return NULL;
+}
 
 result_t validate_instruction(const char *mnemonic, const operand_t *operands, uint8_t operand_count)
 {
@@ -31,23 +46,13 @@ result_t validate_instruction(const char *mnemonic, const operand_t *operands, u
         RAISE_ERR(ERR_NULL_POINTER, 0);
     }
 
-    // Znajdź instrukcję
-    const instruction_descriptor_t *desc = NULL;
-    for (int i = 0; instructions[i].mnemonic != NULL; i++)
-    {
-        if (strcmp(instructions[i].mnemonic, mnemonic) == 0)
-        {
-            desc = &instructions[i];
-            break;
-        }
-    }
-
+    const instruction_descriptor_t *desc = find_instruction(mnemonic);
     if (!desc)
     {
         RAISE_ERR(ERR_VALIDATE_UNKNOWN_INSTRUCTION, 0);
     }
 
-    // Sprawdź liczbę operandów
+    // Check operand count
     if (operand_count < desc->min_operands)
     {
         RAISE_ERR(ERR_VALIDATE_TOO_FEW_OPERANDS, operand_count);
@@ -57,10 +62,10 @@ result_t validate_instruction(const char *mnemonic, const operand_t *operands, u
         RAISE_ERR(ERR_VALIDATE_TOO_MANY_OPERANDS, operand_count);
     }
 
-    // Sprawdź typy operandów
+    // Check operand types
     for (uint8_t i = 0; i < operand_count; i++)
     {
-        uint16_t allowed = desc->operand_patterns[i];
+        uint32_t allowed = desc->operand_patterns[i];
         operand_type_t actual = operands[i].type;
 
         if (!(allowed & actual))
@@ -69,7 +74,7 @@ result_t validate_instruction(const char *mnemonic, const operand_t *operands, u
         }
     }
 
-    // Dodatkowa walidacja (jeśli zdefiniowana)
+    // Execute custom validation (if provided)
     if (desc->validate)
     {
         result_t res = desc->validate(operands, operand_count);
@@ -89,17 +94,7 @@ result_t execute_instruction(const char *mnemonic, const operand_t *operands, ui
         RAISE_ERR(ERR_NULL_POINTER, 0);
     }
 
-    // Znajdź instrukcję
-    const instruction_descriptor_t *desc = NULL;
-    for (int i = 0; instructions[i].mnemonic != NULL; i++)
-    {
-        if (strcmp(instructions[i].mnemonic, mnemonic) == 0)
-        {
-            desc = &instructions[i];
-            break;
-        }
-    }
-
+    const instruction_descriptor_t *desc = find_instruction(mnemonic);
     if (!desc)
     {
         RAISE_ERR(ERR_VALIDATE_UNKNOWN_INSTRUCTION, 0);
@@ -110,17 +105,5 @@ result_t execute_instruction(const char *mnemonic, const operand_t *operands, ui
         RAISE_ERR(ERR_NOT_IMPLEMENTED, 0);
     }
 
-    // Wykonaj instrukcję
-    // LOG_DEBUG("Executing instruction: %s", mnemonic);
-    result_t res = desc->execute(operands, operand_count);
-    if (is_error(res))
-    {
-        // log_error_result(res, mnemonic);
-    }
-    else
-    {
-        // LOG_DEBUG("%s: executed successfully", mnemonic);
-    }
-
-    return res;
+    return desc->execute(operands, operand_count);
 }

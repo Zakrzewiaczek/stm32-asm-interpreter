@@ -57,7 +57,15 @@ extern "C"
          *
          * Reserved for future use (branch targets, literals, etc.).
          */
-        OPERAND_LABEL = 0x100
+        OPERAND_LABEL = 0x100,
+
+        /**
+         * @brief Register list operand ({R0-R3, LR})
+         *
+         * Used by PUSH/POP and LDM/STM instructions. Stored as a
+         * 16-bit bitmask where bit N represents register RN.
+         */
+        OPERAND_REG_LIST = 0x200
     } operand_type_t;
 
     /** @defgroup Operand_Aliases Short Operand Type Names
@@ -65,9 +73,10 @@ extern "C"
      * @{
      */
 
-#define OP_REG OPERAND_REGISTER  ///< Register operand alias
-#define OP_IMM OPERAND_IMMEDIATE ///< Immediate operand alias
-#define OP_LABEL OPERAND_LABEL   ///< Label operand alias
+#define OP_REG      OPERAND_REGISTER  ///< Register operand alias
+#define OP_IMM      OPERAND_IMMEDIATE ///< Immediate operand alias
+#define OP_LABEL    OPERAND_LABEL     ///< Label operand alias
+#define OP_REG_LIST OPERAND_REG_LIST  ///< Register list operand alias
 
     /** @} */
 
@@ -76,12 +85,12 @@ extern "C"
      * @{
      */
 
-#define OP_MEM_SIMPLE OPERAND_MEM_SIMPLE         ///< [Rn] alias
-#define OP_MEM_OFFSET OPERAND_MEM_OFFSET         ///< [Rn, #offset] alias
+#define OP_MEM_SIMPLE     OPERAND_MEM_SIMPLE     ///< [Rn] alias
+#define OP_MEM_OFFSET     OPERAND_MEM_OFFSET     ///< [Rn, #offset] alias
 #define OP_MEM_REG_OFFSET OPERAND_MEM_REG_OFFSET ///< [Rn, Rm] alias
-#define OP_MEM_PRE OPERAND_MEM_PRE_INC           ///< [Rn, #offset]! alias
-#define OP_MEM_POST OPERAND_MEM_POST_INC         ///< [Rn], #offset alias
-#define OP_MEM_SYM OPERAND_MEM_SYMBOL            ///< [SYMBOL] alias
+#define OP_MEM_PRE        OPERAND_MEM_PRE_INC    ///< [Rn, #offset]! alias
+#define OP_MEM_POST       OPERAND_MEM_POST_INC   ///< [Rn], #offset alias
+#define OP_MEM_SYM        OPERAND_MEM_SYMBOL     ///< [SYMBOL] alias
 
 /** @} */
 
@@ -119,8 +128,9 @@ extern "C"
 
         union
         {
-            uint8_t reg;        ///< Register number (0-15) for OPERAND_REGISTER
-            uint32_t immediate; ///< Immediate value for OPERAND_IMMEDIATE
+            uint8_t reg;       ///< Register number (0-15) for OPERAND_REGISTER
+            int32_t immediate; ///< Immediate value for OPERAND_IMMEDIATE (signed)
+            uint16_t reg_list; ///< Register bitmask for OPERAND_REG_LIST (bit N = RN)
 
             /**
              * @brief Memory operand details
@@ -131,7 +141,7 @@ extern "C"
             struct
             {
                 uint8_t base_reg;   ///< Base register (0-15)
-                uint32_t offset;    ///< Offset value (for offset modes)
+                int32_t offset;     ///< Offset value (signed, for offset modes)
                 uint8_t offset_reg; ///< Offset register (for reg offset mode)
                 bool writeback;     ///< Writeback flag (pre/post increment)
             } memory;

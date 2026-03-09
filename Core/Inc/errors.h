@@ -64,6 +64,9 @@ extern "C"
         ERR_PARSE_TRAILING_COMMA = 0x20,         ///< Trailing comma at end
         ERR_PARSE_MISSING_COMMA = 0x21,          ///< Missing comma between operands
         ERR_PARSE_IMMEDIATE_OUT_OF_RANGE = 0x22, ///< Immediate value exceeds 32-bit range
+        ERR_PARSE_INVALID_REG_LIST = 0x23,       ///< Invalid register list syntax
+        ERR_PARSE_EMPTY_REG_LIST = 0x24,         ///< Empty register list {}
+        ERR_PARSE_INVALID_REG_RANGE = 0x25,      ///< Invalid register range (e.g., R5-R2)
 
         /* Validation Errors (0x30-0x3F) --------------------------- */
         ERR_VALIDATE_UNKNOWN_INSTRUCTION = 0x30,  ///< Unknown instruction mnemonic

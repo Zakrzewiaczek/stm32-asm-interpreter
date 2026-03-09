@@ -1,5 +1,3 @@
-
-
 /**
  * @file    data_transfer.h
  * @brief   ARM data transfer instruction implementations
